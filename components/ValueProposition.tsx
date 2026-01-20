@@ -6,7 +6,7 @@ export function ValueProposition() {
   return (
     <div className="space-y-6 md:space-y-4 lg:space-y-6">
       <div>
-        <h1 className="text-2xl md:text-2xl lg:text-3xl font-bold text-black leading-tight tracking-tight">
+        <h1 className="text-2xl md:text-lg lg:text-2xl font-bold text-black leading-tight tracking-tight">
           Find tech jobs before they hit job boards.
         </h1>
       </div>
