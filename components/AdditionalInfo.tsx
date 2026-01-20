@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { ArrowRight, Loader2 } from 'lucide-react'
 import confetti from 'canvas-confetti'
-import { supabase } from '@/lib/supabase'
+import { getSupabase } from '@/lib/supabase'
 import { TECH_FIELDS, SENIORITY_LEVELS, COUNTRIES, WORK_TYPES, ROLE_TYPES } from '@/lib/data'
 
 type AdditionalInfoProps = {
@@ -68,7 +68,7 @@ export function AdditionalInfo({ waitlistId, onComplete }: AdditionalInfoProps) 
     setIsLoading(true)
 
     try {
-      await supabase.from('waitlist_details').insert({
+      await getSupabase().from('waitlist_details').insert({
         waitlist_id: waitlistId,
         field,
         seniority,

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { ArrowRight, Loader2 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { getSupabase } from '@/lib/supabase'
 
 type WaitlistFormProps = {
   onSuccess: (waitlistId: string) => void
@@ -20,7 +20,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
     setIsLoading(true)
 
     try {
-      const { data, error: insertError } = await supabase
+      const { data, error: insertError } = await getSupabase()
         .from('waitlist')
         .insert({ name, email })
         .select('id')
