@@ -44,7 +44,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   }
 
   return (
-    <div className="bg-gray-50 rounded-2xl p-5 sm:p-6 lg:p-8">
+    <div className="p-5 sm:p-6 lg:p-8">
       <div className="text-center mb-4 lg:mb-6">
         <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-black mb-2">
           Join the waitlist for smarter job matching
