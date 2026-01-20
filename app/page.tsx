@@ -25,11 +25,11 @@ export default function Home() {
   return (
     <main className="min-h-screen md:h-screen bg-white flex flex-col md:overflow-hidden">
       {/* Header */}
-      <header className="w-full py-5 lg:py-8 px-6 md:px-10 lg:px-16 shrink-0 border-b border-gray-200">
-        <div className="flex items-center justify-center gap-3">
+      <header className="w-full py-5 md:py-4 lg:py-6 px-6 md:px-8 lg:px-12 shrink-0 border-b border-gray-200">
+        <div className="flex items-center justify-center gap-3 md:gap-2">
           <Logo size={32} />
           <span 
-            className="text-2xl lg:text-3xl font-bold text-black"
+            className="text-2xl md:text-xl lg:text-2xl font-bold text-black"
             style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
           >
             hunt<span className="text-[#FF4500]">.</span>
@@ -38,15 +38,15 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <div className="flex-1 max-w-7xl mx-auto px-6 md:px-10 lg:px-16 py-8 md:py-10 lg:py-12 w-full min-h-0">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1px_1fr] gap-10 md:gap-12 lg:gap-20 items-center md:h-full">
+      <div className="flex-1 max-w-7xl mx-auto px-6 md:px-8 lg:px-12 py-8 md:py-6 lg:py-8 w-full min-h-0">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1px_1fr] gap-10 md:gap-8 lg:gap-12 items-center md:h-full">
           {/* Value Proposition - appears second on mobile, first on desktop */}
-          <div className="w-full order-last md:order-first px-2 sm:px-4 lg:px-0">
+          <div className="w-full order-last md:order-first px-2 md:px-0">
             <ValueProposition />
           </div>
 
           {/* Vertical Divider - hidden on mobile */}
-          <div className="hidden md:block w-px bg-gray-200 h-2/3 self-center" />
+          <div className="hidden md:block w-px bg-gray-200 h-3/4 self-center" />
 
           {/* Form - appears first on mobile, last on desktop */}
           <div className="w-full order-first md:order-last">
@@ -67,10 +67,10 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="w-full py-4 lg:py-6 px-6 md:px-10 lg:px-16 shrink-0">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-center md:justify-between items-center gap-3 text-sm text-gray-500">
+      <footer className="w-full py-5 md:py-3 lg:py-4 px-6 md:px-8 lg:px-12 shrink-0">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-center md:justify-between items-center gap-3 md:gap-2 text-sm md:text-xs lg:text-sm text-gray-500">
           <p>© {new Date().getFullYear()} Hunt. All rights reserved.</p>
-          <div className="flex gap-6">
+          <div className="flex gap-6 md:gap-4 lg:gap-6">
             <a href="#" className="hover:text-black transition-colors">Privacy Policy</a>
             <a href="#" className="hover:text-black transition-colors">Terms of Use</a>
           </div>
