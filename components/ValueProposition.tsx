@@ -14,7 +14,7 @@ export function ValueProposition() {
       <div className="space-y-5 md:space-y-4 lg:space-y-5">
         <div className="space-y-2 md:space-y-1.5 lg:space-y-2">
           <div className="flex items-start gap-3 md:gap-3 lg:gap-3">
-            <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-black flex items-center justify-center mt-0.5">
+            <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-[#FF4500] flex items-center justify-center mt-0.5">
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
             </div>
             <h2 className="text-lg md:text-sm md:leading-tight lg:text-lg font-semibold text-black">
@@ -28,7 +28,7 @@ export function ValueProposition() {
 
         <div className="space-y-2 md:space-y-1.5 lg:space-y-2">
           <div className="flex items-start gap-3 md:gap-3 lg:gap-3">
-            <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-black flex items-center justify-center mt-0.5">
+            <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-[#FF4500] flex items-center justify-center mt-0.5">
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
             </div>
             <h2 className="text-lg md:text-sm md:leading-tight lg:text-lg font-semibold text-black">
@@ -42,7 +42,7 @@ export function ValueProposition() {
 
         <div className="space-y-2 md:space-y-1.5 lg:space-y-2">
           <div className="flex items-start gap-3 md:gap-3 lg:gap-3">
-            <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-black flex items-center justify-center mt-0.5">
+            <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-[#FF4500] flex items-center justify-center mt-0.5">
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
             </div>
             <h2 className="text-lg md:text-sm md:leading-tight lg:text-lg font-semibold text-black">
