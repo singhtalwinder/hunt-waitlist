@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { RocketLogo } from '@/components/RocketLogo'
+import { Logo } from '@/components/Logo'
 import { ValueProposition } from '@/components/ValueProposition'
 import { WaitlistForm } from '@/components/WaitlistForm'
 import { AdditionalInfo } from '@/components/AdditionalInfo'
@@ -27,7 +27,7 @@ export default function Home() {
       {/* Header */}
       <header className="w-full py-6 px-6 md:px-12">
         <div className="flex items-center gap-2">
-          <RocketLogo className="w-8 h-8" />
+          <Logo size={32} />
           <span 
             className="text-2xl font-bold text-black"
             style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}

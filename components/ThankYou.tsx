@@ -1,12 +1,12 @@
 'use client'
 
-import { RocketLogo } from './RocketLogo'
+import { Logo } from './Logo'
 
 export function ThankYou() {
   return (
     <div className="bg-gray-50 rounded-2xl p-8 md:p-10 text-center">
       <div className="flex justify-center mb-6">
-        <RocketLogo className="w-20 h-20" />
+        <Logo size={80} />
       </div>
       
       <h2 className="text-2xl md:text-3xl font-bold text-black mb-4">
