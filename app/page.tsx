@@ -1,65 +1,78 @@
-import Image from "next/image";
+'use client'
+
+import { useState } from 'react'
+import { RocketLogo } from '@/components/RocketLogo'
+import { ValueProposition } from '@/components/ValueProposition'
+import { WaitlistForm } from '@/components/WaitlistForm'
+import { AdditionalInfo } from '@/components/AdditionalInfo'
+import { ThankYou } from '@/components/ThankYou'
+
+type Step = 'initial' | 'additional' | 'complete'
 
 export default function Home() {
+  const [step, setStep] = useState<Step>('initial')
+  const [waitlistId, setWaitlistId] = useState<string>('')
+
+  const handleWaitlistSuccess = (id: string) => {
+    setWaitlistId(id)
+    setStep('additional')
+  }
+
+  const handleAdditionalComplete = () => {
+    setStep('complete')
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="min-h-screen bg-white flex flex-col">
+      {/* Header */}
+      <header className="w-full py-6 px-6 md:px-12">
+        <div className="flex items-center gap-2">
+          <RocketLogo className="w-8 h-8" />
+          <span 
+            className="text-2xl font-bold text-black"
+            style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            hunt
+          </span>
         </div>
-      </main>
-    </div>
-  );
+      </header>
+
+      {/* Main content */}
+      <div className="flex-1 max-w-7xl mx-auto px-6 md:px-12 py-8 md:py-16 w-full">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-16 lg:gap-24 items-start">
+          {/* Form - appears first on mobile, second on desktop */}
+          <div className="w-full order-first md:order-last">
+            {step === 'initial' && (
+              <WaitlistForm onSuccess={handleWaitlistSuccess} />
+            )}
+            {step === 'additional' && (
+              <AdditionalInfo 
+                waitlistId={waitlistId} 
+                onComplete={handleAdditionalComplete} 
+              />
+            )}
+            {step === 'complete' && (
+              <ThankYou />
+            )}
+          </div>
+
+          {/* Value Proposition - appears second on mobile, first on desktop */}
+          <div className="w-full order-last md:order-first">
+            <ValueProposition />
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <footer className="w-full py-8 px-6 md:px-12">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500">
+          <p>© {new Date().getFullYear()} Hunt. All rights reserved.</p>
+          <div className="flex gap-6">
+            <a href="#" className="hover:text-black transition-colors">Privacy Policy</a>
+            <a href="#" className="hover:text-black transition-colors">Terms of Use</a>
+          </div>
+        </div>
+      </footer>
+    </main>
+  )
 }
