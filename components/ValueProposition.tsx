@@ -4,15 +4,15 @@ import { Check } from 'lucide-react'
 
 export function ValueProposition() {
   return (
-    <div className="space-y-6 md:space-y-6 lg:space-y-8">
+    <div className="space-y-6 md:space-y-5 lg:space-y-6">
       <div>
         <h1 className="text-3xl md:text-xl lg:text-3xl font-bold text-black leading-tight tracking-tight">
           Find tech jobs before they hit job boards.
         </h1>
       </div>
 
-      <div className="space-y-5 md:space-y-5 lg:space-y-6">
-        <div className="space-y-2 md:space-y-2 lg:space-y-3">
+      <div className="space-y-5 md:space-y-4 lg:space-y-5">
+        <div className="space-y-2 md:space-y-1.5 lg:space-y-2">
           <div className="flex items-start gap-3 md:gap-3 lg:gap-3">
             <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-black flex items-center justify-center mt-0.5">
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
@@ -26,7 +26,7 @@ export function ValueProposition() {
           </p>
         </div>
 
-        <div className="space-y-2 md:space-y-2 lg:space-y-3">
+        <div className="space-y-2 md:space-y-1.5 lg:space-y-2">
           <div className="flex items-start gap-3 md:gap-3 lg:gap-3">
             <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-black flex items-center justify-center mt-0.5">
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
@@ -40,7 +40,7 @@ export function ValueProposition() {
           </p>
         </div>
 
-        <div className="space-y-2 md:space-y-2 lg:space-y-3">
+        <div className="space-y-2 md:space-y-1.5 lg:space-y-2">
           <div className="flex items-start gap-3 md:gap-3 lg:gap-3">
             <div className="flex-shrink-0 w-6 h-6 md:w-5 md:h-5 lg:w-6 lg:h-6 rounded-full bg-black flex items-center justify-center mt-0.5">
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />

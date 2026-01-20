@@ -25,7 +25,7 @@ export default function Home() {
   return (
     <main className="min-h-screen md:h-screen bg-white flex flex-col md:overflow-hidden">
       {/* Header */}
-      <header className="w-full py-5 md:py-6 lg:py-8 px-6 md:px-8 lg:px-12 shrink-0 border-b border-gray-200">
+      <header className="w-full py-5 md:py-5 lg:py-6 px-6 md:px-8 lg:px-12 shrink-0 border-b border-gray-200">
         <div className="flex items-center justify-center gap-3 md:gap-2">
           <Logo size={32} />
           <span 
@@ -38,8 +38,8 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <div className="flex-1 max-w-7xl mx-auto px-6 md:px-12 lg:px-16 py-8 md:py-8 lg:py-10 w-full min-h-0">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1px_1fr] gap-10 md:gap-12 lg:gap-16 items-center md:h-full">
+      <div className="flex-1 max-w-7xl mx-auto px-6 md:px-10 lg:px-12 py-8 md:py-6 lg:py-8 w-full min-h-0">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1px_1fr] gap-10 md:gap-10 lg:gap-14 items-center md:h-full">
           {/* Value Proposition - appears second on mobile, first on desktop */}
           <div className="w-full order-last md:order-first px-2 md:px-0">
             <ValueProposition />
@@ -67,7 +67,7 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="w-full py-5 md:py-5 lg:py-6 px-6 md:px-8 lg:px-12 shrink-0">
+      <footer className="w-full py-5 md:py-4 lg:py-5 px-6 md:px-8 lg:px-12 shrink-0">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-center md:justify-between items-center gap-3 md:gap-2 text-sm md:text-xs lg:text-sm text-gray-500">
           <p>© {new Date().getFullYear()} Hunt. All rights reserved.</p>
           <div className="flex gap-6 md:gap-4 lg:gap-6">

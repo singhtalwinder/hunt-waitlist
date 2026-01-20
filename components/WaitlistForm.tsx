@@ -44,9 +44,9 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   }
 
   return (
-    <div className="p-6 md:p-6 lg:p-8">
-      <div className="text-center mb-6 md:mb-6 lg:mb-8">
-        <h2 className="text-3xl md:text-xl lg:text-3xl font-bold text-black mb-3 md:mb-3 lg:mb-4">
+    <div className="p-6 md:p-6 lg:p-6">
+      <div className="text-center mb-6 md:mb-5 lg:mb-6">
+        <h2 className="text-3xl md:text-xl lg:text-3xl font-bold text-black mb-3 md:mb-2 lg:mb-3">
           Join the waitlist for smarter job matching
         </h2>
         <p className="text-base md:text-xs lg:text-sm text-gray-600">
@@ -54,7 +54,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4 md:space-y-4 lg:space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-4 md:space-y-3 lg:space-y-4">
         <input
           type="text"
           value={name}
@@ -92,7 +92,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
         </button>
       </form>
 
-      <p className="text-center text-sm md:text-xs lg:text-sm text-gray-500 mt-5 md:mt-6 lg:mt-8">
+      <p className="text-center text-sm md:text-xs lg:text-sm text-gray-500 mt-5 md:mt-5 lg:mt-6">
         By clicking "Get early access," you agree to our{' '}
         <a href="#" className="text-[#FF4500] hover:underline">Privacy Policy</a>
         {' '}and{' '}
