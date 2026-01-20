@@ -23,13 +23,13 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-white flex flex-col">
+    <main className="min-h-screen md:h-screen bg-white flex flex-col md:overflow-hidden">
       {/* Header */}
-      <header className="w-full py-6 px-6 md:px-12">
+      <header className="w-full py-4 lg:py-6 px-4 md:px-8 lg:px-12 shrink-0">
         <div className="flex items-center justify-center gap-2">
-          <Logo size={32} />
+          <Logo size={28} />
           <span 
-            className="text-2xl font-bold text-black"
+            className="text-xl lg:text-2xl font-bold text-black"
             style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
           >
             hunt
@@ -38,8 +38,8 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <div className="flex-1 max-w-7xl mx-auto px-6 md:px-12 py-8 md:py-16 w-full">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-16 lg:gap-24 items-start">
+      <div className="flex-1 max-w-7xl mx-auto px-4 md:px-8 lg:px-12 py-4 md:py-6 lg:py-8 w-full min-h-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-8 lg:gap-16 items-center md:h-full">
           {/* Form - appears first on mobile, second on desktop */}
           <div className="w-full order-first md:order-last">
             {step === 'initial' && (
@@ -64,10 +64,10 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="w-full py-8 px-6 md:px-12">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500">
+      <footer className="w-full py-3 lg:py-4 px-4 md:px-8 lg:px-12 shrink-0">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-2 text-xs lg:text-sm text-gray-500">
           <p>© {new Date().getFullYear()} Hunt. All rights reserved.</p>
-          <div className="flex gap-6">
+          <div className="flex gap-4 lg:gap-6">
             <a href="#" className="hover:text-black transition-colors">Privacy Policy</a>
             <a href="#" className="hover:text-black transition-colors">Terms of Use</a>
           </div>
