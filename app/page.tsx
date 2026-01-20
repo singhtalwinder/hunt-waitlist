@@ -41,7 +41,7 @@ export default function Home() {
       <div className="flex-1 max-w-7xl mx-auto px-4 md:px-8 lg:px-12 py-4 md:py-6 lg:py-8 w-full min-h-0">
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1px_1fr] gap-8 md:gap-8 lg:gap-12 items-center md:h-full">
           {/* Value Proposition - appears second on mobile, first on desktop */}
-          <div className="w-full order-last md:order-first">
+          <div className="w-full order-last md:order-first px-5 sm:px-6 lg:px-0">
             <ValueProposition />
           </div>
 
