@@ -32,7 +32,7 @@ export default function Home() {
             className="text-xl lg:text-2xl font-bold text-black"
             style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
           >
-            hunt
+            hunt.
           </span>
         </div>
       </header>
