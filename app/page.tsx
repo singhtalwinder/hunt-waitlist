@@ -26,7 +26,7 @@ export default function Home() {
     <main className="min-h-screen bg-white flex flex-col">
       {/* Header */}
       <header className="w-full py-6 px-6 md:px-12">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center gap-2">
           <Logo size={32} />
           <span 
             className="text-2xl font-bold text-black"
