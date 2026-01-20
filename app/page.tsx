@@ -68,7 +68,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="w-full py-3 lg:py-4 px-4 md:px-8 lg:px-12 shrink-0">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-2 text-xs lg:text-sm text-gray-500">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-2 text-xs lg:text-sm text-gray-500">
           <p>© {new Date().getFullYear()} Hunt. All rights reserved.</p>
           <div className="flex gap-4 lg:gap-6">
             <a href="#" className="hover:text-black transition-colors">Privacy Policy</a>
