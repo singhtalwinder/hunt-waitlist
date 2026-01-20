@@ -44,24 +44,24 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   }
 
   return (
-    <div className="p-5 sm:p-6 lg:p-8">
-      <div className="text-center mb-4 lg:mb-6">
-        <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-black mb-2">
+    <div className="p-6 sm:p-8 lg:p-10">
+      <div className="text-center mb-6 lg:mb-8">
+        <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-black mb-3">
           Join the waitlist for smarter job matching
         </h2>
-        <p className="text-xs sm:text-sm lg:text-base text-gray-600">
+        <p className="text-sm sm:text-base lg:text-lg text-gray-600">
           Be among the first to access a job search that prioritizes fit, signal, and honesty.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form onSubmit={handleSubmit} className="space-y-4">
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Tell us your name..."
           required
-          className="w-full px-3 lg:px-4 py-2.5 lg:py-3 rounded-lg border border-gray-200 bg-white text-black text-sm lg:text-base placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
+          className="w-full px-4 py-3 lg:py-4 rounded-lg border border-gray-200 bg-white text-black text-base lg:text-lg placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
         />
         <input
           type="email"
@@ -69,30 +69,30 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Enter your email address..."
           required
-          className="w-full px-3 lg:px-4 py-2.5 lg:py-3 rounded-lg border border-gray-200 bg-white text-black text-sm lg:text-base placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
+          className="w-full px-4 py-3 lg:py-4 rounded-lg border border-gray-200 bg-white text-black text-base lg:text-lg placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
         />
 
         {error && (
-          <p className="text-red-500 text-xs lg:text-sm text-center">{error}</p>
+          <p className="text-red-500 text-sm text-center">{error}</p>
         )}
 
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold py-2.5 lg:py-3 px-6 rounded-lg flex items-center justify-center gap-2 text-sm lg:text-base transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold py-3 lg:py-4 px-6 rounded-lg flex items-center justify-center gap-2 text-base lg:text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? (
-            <Loader2 className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />
+            <Loader2 className="w-5 h-5 animate-spin" />
           ) : (
             <>
               Get early access
-              <ArrowRight className="w-4 h-4 lg:w-5 lg:h-5" />
+              <ArrowRight className="w-5 h-5" />
             </>
           )}
         </button>
       </form>
 
-      <p className="text-center text-xs lg:text-sm text-gray-500 mt-4">
+      <p className="text-center text-sm lg:text-base text-gray-500 mt-6">
         By clicking "Get early access," you agree to our{' '}
         <a href="#" className="text-[#FF4500] hover:underline">Privacy Policy</a>
         {' '}and{' '}
