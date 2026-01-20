@@ -7,11 +7,8 @@ export function ValueProposition() {
     <div className="space-y-6 md:space-y-4 lg:space-y-6">
       <div>
         <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-black leading-tight tracking-tight">
-          Stop applying blind.
+          Find tech jobs before they hit job boards.
         </h1>
-        <p className="text-xl md:text-2xl lg:text-3xl text-gray-600 mt-2 md:mt-1 lg:mt-2 leading-snug">
-          Find tech jobs you're actually likely to get.
-        </p>
       </div>
 
       <div className="space-y-5 md:space-y-3 lg:space-y-4">
@@ -21,11 +18,11 @@ export function ValueProposition() {
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
             </div>
             <h2 className="text-lg md:text-sm md:leading-tight lg:text-lg font-semibold text-black">
-              See real opportunities — not job board noise.
+              Discover roles other candidates haven't seen yet.
             </h2>
           </div>
           <p className="text-base md:text-xs md:leading-relaxed lg:text-base text-gray-600 pl-9 md:pl-7 lg:pl-9 leading-relaxed">
-            We crawl real company career pages and ATS systems to surface active tech roles — no reposted junk, no expired listings.
+            We monitor thousands of company career pages and ATS systems to surface new roles as soon as they're posted — often days before they appear on job boards.
           </p>
         </div>
 
@@ -35,11 +32,11 @@ export function ValueProposition() {
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
             </div>
             <h2 className="text-lg md:text-sm md:leading-tight lg:text-lg font-semibold text-black">
-              Built for business and developers in tech.
+              Get matched to the best jobs for your background.
             </h2>
           </div>
           <p className="text-base md:text-xs md:leading-relaxed lg:text-base text-gray-600 pl-9 md:pl-7 lg:pl-9 leading-relaxed">
-            We match you using role‑specific signals — not one‑size‑fits‑all keyword matching.
+            We analyze your experience and role preferences, then match you to jobs where your skills, seniority, and profile actually align — across engineering, product, sales, and operations.
           </p>
         </div>
 
@@ -49,11 +46,11 @@ export function ValueProposition() {
               <Check className="w-4 h-4 md:w-3 md:h-3 lg:w-4 lg:h-4 text-white" strokeWidth={3} />
             </div>
             <h2 className="text-lg md:text-sm md:leading-tight lg:text-lg font-semibold text-black">
-              Honest matches — even when there are none.
+              Access jobs that never appear on job boards.
             </h2>
           </div>
           <p className="text-base md:text-xs md:leading-relaxed lg:text-base text-gray-600 pl-9 md:pl-7 lg:pl-9 leading-relaxed">
-            No fake recommendations, no pressure to apply — just clarity and timing you can trust.
+            Many companies only post roles on their own websites. We find and track those opportunities so you don't miss roles you'd never see on LinkedIn or Indeed.
           </p>
         </div>
       </div>
