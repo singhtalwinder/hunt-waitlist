@@ -7,7 +7,7 @@ export function ValueProposition() {
     <div className="space-y-6 md:space-y-5 lg:space-y-6">
       <div>
         <h1 className="text-3xl md:text-xl lg:text-3xl font-bold text-black leading-tight tracking-tight">
-          Find tech jobs before they hit job boards.
+          Find tech jobs before they hit job boards
         </h1>
       </div>
 
@@ -22,7 +22,7 @@ export function ValueProposition() {
             </h2>
           </div>
           <p className="text-base md:text-xs md:leading-relaxed lg:text-base text-gray-600 pl-9 md:pl-8 lg:pl-9 leading-relaxed">
-            We monitor thousands of company career pages and ATS systems to surface new roles as soon as they're posted — often days before they appear on job boards.
+            We monitor thousands of company career pages and ATS systems to surface new roles as soon as they're posted. Often days before they appear on Linkedin, Indeed or other job boards.
           </p>
         </div>
 

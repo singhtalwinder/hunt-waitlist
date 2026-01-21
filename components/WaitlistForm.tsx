@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
+import Image from 'next/image'
 import { getSupabase } from '@/lib/supabase'
 
 type WaitlistFormProps = {
@@ -27,10 +28,11 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
         .single()
 
       if (insertError) {
+        console.error('Supabase error:', insertError)
         if (insertError.code === '23505') {
           setError('This email is already on the waitlist!')
         } else {
-          setError('Something went wrong. Please try again.')
+          setError(`Error: ${insertError.message || 'Something went wrong. Please try again.'}`)
         }
         return
       }
@@ -46,11 +48,11 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   return (
     <div className="p-6 md:p-6 lg:p-6">
       <div className="text-center mb-6 md:mb-5 lg:mb-6">
-        <h2 className="text-3xl md:text-xl lg:text-3xl font-bold text-black mb-3 md:mb-2 lg:mb-3">
-          Join the waitlist for smarter job matching
-        </h2>
+        <h1 className="text-3xl md:text-xl lg:text-3xl font-bold text-black leading-tight tracking-tight mb-3 md:mb-2 lg:mb-3">
+          Get early access to hunt
+        </h1>
         <p className="text-base md:text-xs lg:text-sm text-gray-600">
-          Be among the first to access a job search that prioritizes fit, signal, and honesty.
+          Join the waitlist to be notified when we launch and start seeing new tech jobs before everyone else.
         </p>
       </div>
 
@@ -86,7 +88,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
           ) : (
             <>
               Get early access
-              <ArrowRight className="w-5 h-5" />
+              <Image src="/paper.png" alt="" width={20} height={20} className="brightness-0 invert" />
             </>
           )}
         </button>
