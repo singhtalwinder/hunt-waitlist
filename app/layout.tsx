@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/huntsocialpreview.png",
+        url: "/og-image.png",
         width: 1200,
         height: 630,
         alt: "Hunt - Stop applying blind. Find tech jobs you're actually likely to get.",
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Hunt - Stop applying blind.",
     description: "Find tech jobs you're actually likely to get. Join the waitlist for smarter job matching.",
-    images: ["/huntsocialpreview.png"],
+    images: ["/og-image.png"],
   },
 };
 
