@@ -414,6 +414,143 @@ def run_full_pipeline_task(company_id: str):
     logger.info("Pipeline tasks queued", company_id=company_id)
 
 
+# ============================================
+# CUSTOM CRAWLER TASKS
+# ============================================
+
+
+@dramatiq.actor(max_retries=1, time_limit=3600000)  # 1 hour time limit
+def crawl_custom_companies_task(limit: int = 50, mark_exhausted: bool = True):
+    """Crawl companies with custom career pages using Playwright + LLM.
+    
+    This handles companies where:
+    - ATS detection failed after max attempts
+    - ATS type is explicitly set to 'custom' or 'playwright'
+    
+    Args:
+        limit: Max companies to crawl
+        mark_exhausted: If True, first mark exhausted ATS detection as 'custom'
+    """
+    from app.engines.crawl.custom_crawler import crawl_custom_companies
+
+    logger.info("Starting custom crawl task", limit=limit, mark_exhausted=mark_exhausted)
+    stats = run_async(crawl_custom_companies(limit=limit, mark_exhausted=mark_exhausted))
+    logger.info(
+        "Custom crawl task complete",
+        processed=stats.get("processed", 0),
+        jobs_found=stats.get("jobs_found", 0),
+        errors=stats.get("errors", 0),
+    )
+
+
+@dramatiq.actor(max_retries=1, time_limit=3600000)  # 1 hour time limit
+def enrich_custom_jobs_task(limit: int = 100):
+    """Enrich jobs from custom companies using Playwright.
+    
+    Fetches full job descriptions from job posting pages that don't use standard ATS.
+    
+    Args:
+        limit: Max jobs to enrich
+    """
+    from app.engines.crawl.custom_crawler import enrich_custom_jobs
+
+    logger.info("Starting custom enrichment task", limit=limit)
+    stats = run_async(enrich_custom_jobs(limit=limit))
+    logger.info(
+        "Custom enrichment task complete",
+        processed=stats.get("processed", 0),
+        success=stats.get("success", 0),
+        failed=stats.get("failed", 0),
+    )
+
+
+# ============================================
+# MAINTENANCE TASKS
+# ============================================
+
+
+@dramatiq.actor(max_retries=1, time_limit=7200000)  # 2 hour time limit
+def run_maintenance_task(
+    ats_type: Optional[str] = None,
+    limit: int = 100,
+    include_custom: bool = True,
+):
+    """Run maintenance to verify jobs still exist on company career pages.
+    
+    This task:
+    1. Re-crawls company ATS/career pages
+    2. Compares with existing jobs in database
+    3. Delists jobs that no longer exist
+    4. Adds new jobs that were discovered
+    5. Updates last_verified_at for existing jobs
+    
+    Args:
+        ats_type: Filter by ATS type (e.g., "greenhouse", "lever", "custom")
+        limit: Max companies to check
+        include_custom: Include custom/Playwright companies (default True)
+    """
+    from app.db import async_session_factory
+    from app.engines.maintenance.service import MaintenanceEngine
+
+    async def run_maintenance():
+        async with async_session_factory() as db:
+            engine = MaintenanceEngine(db)
+            try:
+                return await engine.run_maintenance(
+                    ats_type=ats_type,
+                    limit=limit,
+                    include_custom=include_custom,
+                )
+            finally:
+                await engine.close()
+
+    logger.info("Starting maintenance task", ats_type=ats_type, limit=limit)
+    results = run_async(run_maintenance())
+    logger.info(
+        "Maintenance task complete",
+        companies_checked=results.get("companies_checked", 0),
+        jobs_verified=results.get("jobs_verified", 0),
+        jobs_new=results.get("jobs_new", 0),
+        jobs_delisted=results.get("jobs_delisted", 0),
+        errors=results.get("errors", 0),
+    )
+
+
+@dramatiq.actor(max_retries=1, time_limit=3600000)  # 1 hour time limit
+def run_maintenance_by_ats_task(ats_type: str, limit: int = 50):
+    """Run maintenance for a specific ATS type.
+    
+    Useful for running maintenance on different ATS types concurrently.
+    
+    Args:
+        ats_type: ATS type to maintain (greenhouse, lever, ashby, workable, custom)
+        limit: Max companies to check
+    """
+    from app.db import async_session_factory
+    from app.engines.maintenance.service import MaintenanceEngine
+
+    async def run_maintenance():
+        async with async_session_factory() as db:
+            engine = MaintenanceEngine(db)
+            try:
+                return await engine.run_maintenance(
+                    ats_type=ats_type,
+                    limit=limit,
+                    include_custom=False,
+                )
+            finally:
+                await engine.close()
+
+    logger.info(f"Starting maintenance for {ats_type}", limit=limit)
+    results = run_async(run_maintenance())
+    logger.info(
+        f"Maintenance complete for {ats_type}",
+        companies_checked=results.get("companies_checked", 0),
+        jobs_delisted=results.get("jobs_delisted", 0),
+        jobs_new=results.get("jobs_new", 0),
+    )
+
+
 @dramatiq.actor(max_retries=1)
 def run_daily_pipeline_task():
     """Run daily pipeline for all companies."""

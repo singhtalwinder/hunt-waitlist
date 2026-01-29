@@ -27,6 +27,9 @@ def setup_scheduler():
         run_discovery_source_task,
         process_discovery_queue_task,
         ats_prober_task,
+        crawl_custom_companies_task,
+        enrich_custom_jobs_task,
+        run_maintenance_task,
     )
 
     # ============================================
@@ -139,6 +142,41 @@ def setup_scheduler():
         trigger=IntervalTrigger(hours=2),
         id="enrich_jobs",
         name="Enrich jobs without descriptions",
+        replace_existing=True,
+    )
+
+    # ============================================
+    # CUSTOM CRAWLER SCHEDULES
+    # ============================================
+
+    # Crawl custom career pages (companies without recognized ATS) every 6 hours
+    scheduler.add_job(
+        lambda: crawl_custom_companies_task.send(50, True),
+        trigger=IntervalTrigger(hours=6),
+        id="crawl_custom_companies",
+        name="Crawl custom career pages (Playwright)",
+        replace_existing=True,
+    )
+
+    # Enrich custom jobs (fetch descriptions) every 4 hours
+    scheduler.add_job(
+        lambda: enrich_custom_jobs_task.send(100),
+        trigger=IntervalTrigger(hours=4),
+        id="enrich_custom_jobs",
+        name="Enrich custom jobs (Playwright)",
+        replace_existing=True,
+    )
+
+    # ============================================
+    # MAINTENANCE SCHEDULES
+    # ============================================
+
+    # Run maintenance to verify jobs still exist - Daily at 5 AM UTC
+    scheduler.add_job(
+        lambda: run_maintenance_task.send(None, 200, True),
+        trigger=CronTrigger(hour=5, minute=0),
+        id="daily_maintenance",
+        name="Daily job maintenance/verification",
         replace_existing=True,
     )
 
