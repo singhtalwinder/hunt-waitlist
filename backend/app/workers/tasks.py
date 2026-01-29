@@ -131,11 +131,11 @@ def normalize_company_task(company_id: str):
 
 
 @dramatiq.actor(max_retries=3, min_backoff=60000)
-def enrich_jobs_task(limit: int = 50, company_id: Optional[str] = None):
+def enrich_jobs_task(limit: Optional[int] = None, company_id: Optional[str] = None):
     """Enrich jobs that are missing descriptions."""
     from app.engines.enrich.service import enrich_jobs_without_descriptions
 
-    logger.info("Starting enrichment task", limit=limit, company_id=company_id)
+    logger.info("Starting enrichment task", limit=limit or "unlimited", company_id=company_id)
     run_async(enrich_jobs_without_descriptions(limit=limit, company_id=company_id))
     logger.info("Enrichment task complete")
 

@@ -640,7 +640,7 @@
                 async runPipelineEnrich() {
                     this.pipelineRunning = true;
                     try {
-                        const res = await fetch('/api/admin/pipeline/enrich?limit=500', { method: 'POST' });
+                        const res = await fetch('/api/admin/pipeline/enrich', { method: 'POST' });
                         const data = await res.json();
                         this.showMessage(data.message || 'Enrichment started', 'success');
                     } catch (e) {

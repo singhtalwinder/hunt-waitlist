@@ -392,6 +392,89 @@ def extract_identifier_from_html(html: str, ats_type: str) -> Optional[str]:
     return None
 
 
+def _is_valid_careers_url_for_domain(careers_url: str, company_domain: str) -> bool:
+    """
+    Check if a careers URL is valid for a given company domain.
+    
+    Valid cases:
+    1. Same domain or subdomain (e.g., careers.company.com for company.com)
+    2. Known ATS platforms (greenhouse.io, lever.co, etc.)
+    3. URL contains the company name/domain as identifier
+    
+    Invalid cases:
+    - Careers URL pointing to a completely different company's domain
+    """
+    parsed = urlparse(careers_url)
+    careers_host = parsed.netloc.lower()
+    company_domain = company_domain.lower()
+    
+    # Extract the base domain (without subdomains) for comparison
+    # e.g., "www.company.com" -> "company.com"
+    company_parts = company_domain.split(".")
+    if len(company_parts) >= 2:
+        company_base = ".".join(company_parts[-2:])  # company.com
+    else:
+        company_base = company_domain
+    
+    careers_parts = careers_host.split(".")
+    if len(careers_parts) >= 2:
+        careers_base = ".".join(careers_parts[-2:])
+    else:
+        careers_base = careers_host
+    
+    # Case 1: Same domain or subdomain
+    if company_base == careers_base:
+        return True
+    
+    # Case 2: Known ATS platforms - these are always valid
+    ats_domains = [
+        "greenhouse.io",
+        "lever.co",
+        "ashbyhq.com",
+        "workable.com",
+        "myworkdayjobs.com",
+        "bamboohr.com",
+        "zohorecruit.com",
+        "zohorecruitcloud.com",
+        "bullhornstaffing.com",
+        "gem.com",
+        "applytojob.com",
+        "jazz.co",
+        "freshteam.com",
+        "recruitee.com",
+        "pinpointhq.com",
+        "pcrecruiter.net",
+        "recruitcrm.io",
+        "manatal.com",
+        "recooty.com",
+        "successfactors.com",
+        "successfactors.eu",
+        "gohire.io",
+        "folkshr.com",
+        "goboon.co",
+        "talentreef.com",
+        "eddy.com",
+        "jobvite.com",
+        "icims.com",
+        "smartrecruiters.com",
+    ]
+    
+    for ats_domain in ats_domains:
+        if careers_host.endswith(ats_domain):
+            return True
+    
+    # Case 3: Check if company name appears in the careers URL path/subdomain
+    # Extract company name from domain (e.g., "bankinfosecurity" from "bankinfosecurity.asia")
+    company_name = company_parts[0] if company_parts else company_domain
+    
+    # Check if company name is in the careers URL (subdomain or path)
+    if company_name in careers_host or company_name in parsed.path.lower():
+        return True
+    
+    # Invalid: careers URL points to a different company
+    return False
+
+
 async def get_careers_url(
     client: httpx.AsyncClient,
     domain: str,
@@ -423,9 +506,18 @@ async def get_careers_url(
                 ats_type, _ = detect_ats_from_url(final_url)
 
                 if ats_type:
-                    return final_url
+                    # Validate that the ATS URL is for this company
+                    if _is_valid_careers_url_for_domain(final_url, domain):
+                        return final_url
+                    else:
+                        logger.debug(
+                            "Skipping careers URL - belongs to different company",
+                            domain=domain,
+                            careers_url=final_url,
+                        )
+                        continue
 
-                # Otherwise return the careers page
+                # Otherwise return the careers page (same domain)
                 return final_url
 
         except Exception:
@@ -447,8 +539,18 @@ async def get_careers_url(
                 matches = re.findall(pattern, html, re.IGNORECASE)
                 for match in matches:
                     if match.startswith("http"):
-                        return match
+                        # Validate external URLs belong to this company
+                        if _is_valid_careers_url_for_domain(match, domain):
+                            return match
+                        else:
+                            logger.debug(
+                                "Skipping external careers URL - belongs to different company",
+                                domain=domain,
+                                careers_url=match,
+                            )
+                            continue
                     elif match.startswith("/"):
+                        # Relative URLs are always valid (same domain)
                         return f"{base_url}{match}"
 
     except Exception:

@@ -228,28 +228,44 @@ class NetworkCrawlerSource(DiscoverySource):
             companies_processed += len(batch)
             self._progress_current = companies_processed
             
+            # Collect company IDs to mark as crawled (must do DB ops outside gather)
+            crawled_company_ids = []
+            
             # Yield discovered companies from batch
             for result in results:
                 if isinstance(result, Exception):
                     logger.warning(f"[network_crawler] Batch error: {result}")
                     continue
-                if isinstance(result, list):
-                    for company in result:
+                if isinstance(result, tuple) and len(result) == 2:
+                    discovered_list, company_id = result
+                    if company_id:
+                        crawled_company_ids.append(company_id)
+                    for company in discovered_list:
                         total_found += 1
                         ats_info = f" (ATS: {company.ats_type})" if company.ats_type else ""
                         logger.info(f"[network_crawler] → Discovered: {company.name} ({company.domain}){ats_info}")
                         yield company
             
+            # Mark companies as crawled (safe: sequential DB ops after gather completes)
+            if self.db and crawled_company_ids:
+                await self._mark_companies_crawled(crawled_company_ids)
+            
             logger.info(f"[network_crawler] Batch {batch_num} complete. {companies_processed}/{total_companies} crawled, {total_found} found")
         
         logger.info(f"[network_crawler] Discovery complete: {total_found} new companies from {total_companies} sources")
     
-    async def _crawl_single_company(self, company: Dict) -> List[DiscoveredCompany]:
-        """Crawl a single company and return discovered companies."""
+    async def _crawl_single_company(self, company: Dict) -> tuple[List[DiscoveredCompany], Optional[str]]:
+        """Crawl a single company and return discovered companies.
+        
+        Returns:
+            Tuple of (discovered_companies, company_id_to_mark_crawled)
+            The company_id is returned so the caller can update the DB
+            outside of the concurrent context (AsyncSession is not task-safe).
+        """
         domain = company.get("domain")
         company_id = company.get("id")
         if not domain:
-            return []
+            return [], None
         
         # Note: We don't check if source company's domain is a duplicate - 
         # it's expected to be in our database. The dedup check is for DISCOVERED domains.
@@ -281,24 +297,29 @@ class NetworkCrawlerSource(DiscoverySource):
         except Exception as e:
             logger.debug(f"[network_crawler] Error crawling {domain}: {e}")
         
-        # Mark this company as crawled for network discovery
-        if self.db and company_id:
-            try:
-                from datetime import datetime
-                await self.db.execute(
-                    select(Company).where(Company.id == company_id)
-                )
+        # Return the company_id so caller can mark it as crawled
+        # (DB operations must happen outside concurrent gather() calls)
+        return discovered_companies, company_id
+    
+    async def _mark_companies_crawled(self, company_ids: List[str]) -> None:
+        """Mark companies as crawled for network discovery.
+        
+        This is called after asyncio.gather() completes to avoid
+        concurrent access to the AsyncSession (which is not task-safe).
+        """
+        from datetime import datetime
+        
+        try:
+            for company_id in company_ids:
                 result = await self.db.execute(
                     select(Company).where(Company.id == company_id)
                 )
                 comp = result.scalar_one_or_none()
                 if comp:
                     comp.last_crawled_for_network = datetime.utcnow()
-                    # Don't commit here - let the orchestrator handle commits
-            except Exception as e:
-                logger.debug(f"[network_crawler] Error updating crawl timestamp for {domain}: {e}")
-        
-        return discovered_companies
+            # Don't commit here - let the orchestrator handle commits
+        except Exception as e:
+            logger.debug(f"[network_crawler] Error updating crawl timestamps: {e}")
     
     async def _load_existing_domains(self) -> None:
         """Load existing company domains from database."""

@@ -208,56 +208,49 @@ class JobEnrichmentService:
     async def _enrich_workable(
         self, job: Job, company: Company, client: httpx.AsyncClient
     ) -> bool:
-        """Enrich from Workable job page."""
-        if not job.source_url:
+        """Enrich from Workable v2 API."""
+        if not job.source_url or not company.ats_identifier:
             return False
         
         try:
-            # Workable job URLs are like https://apply.workable.com/j/XXXXX
-            resp = await client.get(job.source_url)
-            if resp.status_code != 200:
+            # Extract shortcode from job URL
+            # URLs are like: https://apply.workable.com/j/3B788DEB41
+            # or: https://apply.workable.com/company-name/j/3B788DEB41
+            shortcode = None
+            match = re.search(r'/j/([A-Za-z0-9]+)', job.source_url)
+            if match:
+                shortcode = match.group(1)
+            
+            if not shortcode:
+                logger.debug(f"No shortcode found in Workable URL: {job.source_url}")
                 return False
             
-            html = resp.text
+            # Use the v2 API endpoint which returns full job details including description
+            api_url = f"https://apply.workable.com/api/v2/accounts/{company.ats_identifier}/jobs/{shortcode}"
             
-            # Extract from window.job JSON
-            job_match = re.search(r'window\.job\s*=\s*(\{.*?\});', html, re.DOTALL)
-            if job_match:
-                import json
+            resp = await client.get(api_url)
+            if resp.status_code != 200:
+                logger.debug(f"Workable API {resp.status_code} for {api_url}")
+                return False
+            
+            data = resp.json()
+            
+            # Extract description (HTML content)
+            desc = data.get("description", "")
+            if desc:
+                plain_text = re.sub(r'<[^>]+>', ' ', desc)
+                plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+                job.description = plain_text[:10000]
+            
+            # Extract posted date
+            published = data.get("published")
+            if published:
                 try:
-                    job_data = json.loads(job_match.group(1))
-                    
-                    desc = job_data.get("description", "")
-                    if desc:
-                        plain_text = re.sub(r'<[^>]+>', ' ', desc)
-                        plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                        job.description = plain_text[:10000]
-                    
-                    posted = job_data.get("published_on") or job_data.get("created_at")
-                    if posted:
-                        try:
-                            job.posted_at = datetime.fromisoformat(posted.replace("Z", "+00:00"))
-                        except:
-                            pass
-                    
-                    return bool(job.description)
+                    job.posted_at = datetime.fromisoformat(published.replace("Z", "+00:00"))
                 except:
                     pass
             
-            # Fallback: scrape from HTML
-            desc_match = re.search(
-                r'<div[^>]*class="[^"]*job-description[^"]*"[^>]*>(.*?)</div>',
-                html, re.DOTALL | re.IGNORECASE
-            )
-            if desc_match:
-                content = desc_match.group(1)
-                plain_text = re.sub(r'<[^>]+>', ' ', content)
-                plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                if len(plain_text) > 50:
-                    job.description = plain_text[:10000]
-                    return True
-            
-            return False
+            return bool(job.description)
             
         except Exception as e:
             logger.debug(f"Workable enrichment failed: {e}")
@@ -319,122 +312,194 @@ class JobEnrichmentService:
     async def enrich_jobs_batch(
         self,
         ats_type: Optional[str] = None,
-        limit: int = 100,
+        limit: Optional[int] = None,
         concurrency: int = 10,
+        batch_size: int = 500,
     ) -> dict:
-        """Enrich a batch of jobs that are missing descriptions."""
+        """Enrich jobs that are missing descriptions in continuous batches.
+        
+        Processes jobs in batches and keeps checking for new jobs until none remain.
+        This ensures jobs added during processing are also picked up.
+        
+        Args:
+            ats_type: Optional ATS type filter
+            limit: Optional total limit (None = no limit, process all)
+            concurrency: Max concurrent enrichment operations per batch
+            batch_size: Number of jobs to fetch per batch
+        """
         from app.db import async_session_factory
         
-        # Build query for jobs needing enrichment
-        query = (
-            select(Job, Company)
-            .join(Company, Job.company_id == Company.id)
-            .where(Job.description.is_(None) | (Job.description == ""))
-        )
+        results = {"success": 0, "failed": 0, "batches": 0}
+        total_processed = 0
         
-        if ats_type:
-            query = query.where(Company.ats_type == ats_type)
+        while True:
+            # Check if we've hit the total limit
+            if limit is not None and total_processed >= limit:
+                break
+            
+            # Calculate how many to fetch this batch
+            fetch_limit = batch_size
+            if limit is not None:
+                fetch_limit = min(batch_size, limit - total_processed)
+            
+            # Fetch next batch of jobs needing enrichment
+            async with async_session_factory() as db:
+                query = (
+                    select(Job, Company)
+                    .join(Company, Job.company_id == Company.id)
+                    .where(Job.description.is_(None) | (Job.description == ""))
+                )
+                
+                if ats_type:
+                    query = query.where(Company.ats_type == ats_type)
+                
+                query = query.limit(fetch_limit)
+                
+                result = await db.execute(query)
+                jobs_to_enrich = result.fetchall()
+            
+            # No more jobs to enrich - we're done
+            if not jobs_to_enrich:
+                logger.info("No more jobs to enrich")
+                break
+            
+            results["batches"] += 1
+            logger.info(f"Enrichment batch {results['batches']}: processing {len(jobs_to_enrich)} jobs")
+            
+            semaphore = asyncio.Semaphore(concurrency)
+            batch_success = 0
+            batch_failed = 0
+            
+            async def enrich_with_semaphore(job: Job, company: Company):
+                nonlocal batch_success, batch_failed
+                async with semaphore:
+                    # Use separate session for each job
+                    async with async_session_factory() as db:
+                        # Re-fetch job in this session
+                        result = await db.execute(select(Job).where(Job.id == job.id))
+                        job_in_session = result.scalar_one_or_none()
+                        
+                        if not job_in_session:
+                            batch_failed += 1
+                            return
+                        
+                        # Skip if already enriched (race condition protection)
+                        if job_in_session.description:
+                            return
+                        
+                        service = JobEnrichmentService(db)
+                        try:
+                            success = await service.enrich_job(job_in_session, company)
+                            if success:
+                                await db.commit()
+                                batch_success += 1
+                            else:
+                                batch_failed += 1
+                        finally:
+                            await service.close()
+            
+            tasks = [enrich_with_semaphore(job, company) for job, company in jobs_to_enrich]
+            await asyncio.gather(*tasks)
+            
+            results["success"] += batch_success
+            results["failed"] += batch_failed
+            total_processed += len(jobs_to_enrich)
+            
+            logger.info(
+                f"Batch {results['batches']} complete: {batch_success} success, {batch_failed} failed. "
+                f"Total: {results['success']} success, {results['failed']} failed"
+            )
         
-        query = query.limit(limit)
-        
-        result = await self.db.execute(query)
-        jobs_to_enrich = result.fetchall()
-        
-        logger.info(f"Enriching {len(jobs_to_enrich)} jobs")
-        
-        semaphore = asyncio.Semaphore(concurrency)
-        results = {"success": 0, "failed": 0}
-        
-        async def enrich_with_semaphore(job: Job, company: Company):
-            async with semaphore:
-                # Use separate session for each job
-                async with async_session_factory() as db:
-                    # Re-fetch job in this session
-                    result = await db.execute(select(Job).where(Job.id == job.id))
-                    job_in_session = result.scalar_one_or_none()
-                    
-                    if not job_in_session:
-                        results["failed"] += 1
-                        return
-                    
-                    service = JobEnrichmentService(db)
-                    try:
-                        success = await service.enrich_job(job_in_session, company)
-                        if success:
-                            await db.commit()
-                            results["success"] += 1
-                        else:
-                            results["failed"] += 1
-                    finally:
-                        await service.close()
-        
-        tasks = [enrich_with_semaphore(job, company) for job, company in jobs_to_enrich]
-        await asyncio.gather(*tasks)
-        
-        logger.info(f"Enrichment complete", **results)
+        logger.info(f"Enrichment complete: {results['batches']} batches, {results['success']} success, {results['failed']} failed")
         return results
 
 
 async def enrich_jobs_without_descriptions(
-    limit: int = 50,
+    limit: Optional[int] = None,
     company_id: Optional[str] = None,
     ats_type: Optional[str] = None,
+    batch_size: int = 100,
 ) -> int:
-    """Enrich jobs that are missing descriptions.
+    """Enrich jobs that are missing descriptions in continuous batches.
     
-    This is the main entry point for the enrichment task.
+    This is the main entry point for the enrichment task. Processes jobs in
+    batches and keeps checking for new jobs until none remain.
     
     Args:
-        limit: Maximum number of jobs to enrich
+        limit: Optional maximum number of jobs to enrich (None = no limit)
         company_id: Optional - only enrich jobs from this company
         ats_type: Optional - only enrich jobs from companies with this ATS type
+        batch_size: Number of jobs to process per batch
         
     Returns:
         Number of jobs successfully enriched
     """
     from app.db import async_session_factory
     
-    async with async_session_factory() as db:
-        # Build query for jobs needing enrichment
-        query = (
-            select(Job, Company)
-            .join(Company, Job.company_id == Company.id)
-            .where(Job.description.is_(None) | (Job.description == ""))
-        )
+    enriched_count = 0
+    total_processed = 0
+    batch_num = 0
+    
+    while True:
+        # Check if we've hit the total limit
+        if limit is not None and total_processed >= limit:
+            break
         
-        if company_id:
-            query = query.where(Job.company_id == UUID(company_id))
+        # Calculate how many to fetch this batch
+        fetch_limit = batch_size
+        if limit is not None:
+            fetch_limit = min(batch_size, limit - total_processed)
         
-        if ats_type:
-            query = query.where(Company.ats_type == ats_type)
-        
-        query = query.limit(limit)
-        
-        result = await db.execute(query)
-        jobs_to_enrich = result.fetchall()
-        
-        if not jobs_to_enrich:
-            logger.info("No jobs to enrich")
-            return 0
-        
-        logger.info(f"Found {len(jobs_to_enrich)} jobs to enrich")
-        
-        enriched_count = 0
-        service = JobEnrichmentService(db)
-        
-        try:
-            for job, company in jobs_to_enrich:
-                try:
-                    success = await service.enrich_job(job, company)
-                    if success:
-                        enriched_count += 1
-                        # Commit each successful enrichment
-                        await db.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to enrich job {job.id}: {e}")
-                    await db.rollback()
-        finally:
-            await service.close()
-        
-        logger.info(f"Enriched {enriched_count}/{len(jobs_to_enrich)} jobs")
-        return enriched_count
+        async with async_session_factory() as db:
+            # Build query for jobs needing enrichment
+            query = (
+                select(Job, Company)
+                .join(Company, Job.company_id == Company.id)
+                .where(Job.description.is_(None) | (Job.description == ""))
+            )
+            
+            if company_id:
+                query = query.where(Job.company_id == UUID(company_id))
+            
+            if ats_type:
+                query = query.where(Company.ats_type == ats_type)
+            
+            query = query.limit(fetch_limit)
+            
+            result = await db.execute(query)
+            jobs_to_enrich = result.fetchall()
+            
+            if not jobs_to_enrich:
+                logger.info("No more jobs to enrich")
+                break
+            
+            batch_num += 1
+            logger.info(f"Enrichment batch {batch_num}: processing {len(jobs_to_enrich)} jobs")
+            
+            service = JobEnrichmentService(db)
+            batch_enriched = 0
+            
+            try:
+                for job, company in jobs_to_enrich:
+                    try:
+                        # Skip if already enriched (race condition protection)
+                        if job.description:
+                            continue
+                        
+                        success = await service.enrich_job(job, company)
+                        if success:
+                            batch_enriched += 1
+                            enriched_count += 1
+                            # Commit each successful enrichment
+                            await db.commit()
+                    except Exception as e:
+                        logger.warning(f"Failed to enrich job {job.id}: {e}")
+                        await db.rollback()
+            finally:
+                await service.close()
+            
+            total_processed += len(jobs_to_enrich)
+            logger.info(f"Batch {batch_num} complete: {batch_enriched} enriched. Total: {enriched_count}")
+    
+    logger.info(f"Enrichment complete: {batch_num} batches, {enriched_count} jobs enriched")
+    return enriched_count

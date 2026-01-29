@@ -85,7 +85,7 @@ class PipelineScheduler:
                     skip_enrichment=False,
                     skip_embeddings=False,
                     crawl_limit=100,
-                    enrich_limit=500,
+                    enrich_limit=None,  # No limit - enrich all jobs without descriptions
                     embedding_batch_size=100,
                 )
                 

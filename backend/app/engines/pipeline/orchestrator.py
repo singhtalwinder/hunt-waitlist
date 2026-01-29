@@ -209,7 +209,7 @@ class PipelineOrchestrator:
         skip_enrichment: bool = False,
         skip_embeddings: bool = False,
         crawl_limit: int = 100,
-        enrich_limit: int = 500,
+        enrich_limit: Optional[int] = None,
         embedding_batch_size: int = 100,
         crawl_run_id: Optional[UUID] = None,
         enrich_run_id: Optional[UUID] = None,
@@ -226,7 +226,7 @@ class PipelineOrchestrator:
             skip_enrichment: Skip the enrichment stage
             skip_embeddings: Skip the embeddings stage
             crawl_limit: Max companies to crawl
-            enrich_limit: Max jobs to enrich per ATS
+            enrich_limit: Optional max jobs to enrich per ATS (None = no limit)
             embedding_batch_size: Batch size for embeddings
             crawl_run_id: Optional pipeline_runs ID for crawl stage logging
             enrich_run_id: Optional pipeline_runs ID for enrich stage logging
@@ -480,11 +480,11 @@ class PipelineOrchestrator:
         
         return results
     
-    async def _run_enrichment(self, limit: int = 500, run_id: Optional[UUID] = None) -> dict:
+    async def _run_enrichment(self, limit: Optional[int] = None, run_id: Optional[UUID] = None) -> dict:
         """Enrich jobs with descriptions.
         
         Args:
-            limit: Max jobs to enrich per ATS
+            limit: Optional max jobs to enrich per ATS (None = no limit)
             run_id: Optional pipeline_runs ID for logging
         """
         from app.engines.enrich.service import JobEnrichmentService
@@ -498,7 +498,7 @@ class PipelineOrchestrator:
                     db, run_id, "info", 
                     f"Starting enrichment for {len(ats_types)} ATS types",
                     current_step="Starting enrichment",
-                    data={"ats_types": ats_types, "limit_per_ats": limit}
+                    data={"ats_types": ats_types, "limit_per_ats": limit or "unlimited"}
                 )
             
             service = JobEnrichmentService(db)
@@ -518,9 +518,10 @@ class PipelineOrchestrator:
                     self._status.current_step = f"Enriching {ats_type} jobs"
                     
                     if run_id:
+                        limit_msg = f"up to {limit}" if limit else "all"
                         await log_to_run(
                             db, run_id, "info",
-                            f"Enriching {ats_type} jobs (up to {limit})",
+                            f"Enriching {ats_type} jobs ({limit_msg})",
                             current_step=f"Enriching {ats_type} ({idx+1}/{len(ats_types)})"
                         )
                     
@@ -844,7 +845,7 @@ class PipelineOrchestrator:
     async def run_enrich_standalone(
         self,
         ats_type: Optional[str] = None,
-        limit: int = 500,
+        limit: Optional[int] = None,
         run_id: Optional[UUID] = None,
     ) -> dict:
         """
@@ -873,7 +874,7 @@ class PipelineOrchestrator:
     async def _run_enrich_by_ats(
         self,
         ats_type: str,
-        limit: int = 500,
+        limit: Optional[int] = None,
         run_id: Optional[UUID] = None,
     ) -> dict:
         """Enrich jobs for a specific ATS type."""

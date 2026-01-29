@@ -89,8 +89,11 @@
                 <p class="text-sm text-gray-500">Process companies and jobs through the pipeline</p>
             </div>
             <div class="flex items-center gap-2">
-                <span class="text-sm text-gray-500" x-text="pipelineRunning ? 'Running...' : 'Idle'"></span>
-                <span class="w-2 h-2 rounded-full" :class="pipelineRunning ? 'bg-orange-500 animate-pulse' : 'bg-gray-300'"></span>
+                <template x-if="anyRunning">
+                    <span class="text-xs text-gray-500" x-text="Object.keys(runningOperations).join(', ')"></span>
+                </template>
+                <span class="text-sm text-gray-500" x-text="anyRunning ? 'Running...' : 'Idle'"></span>
+                <span class="w-2 h-2 rounded-full" :class="anyRunning ? 'bg-orange-500 animate-pulse' : 'bg-gray-300'"></span>
             </div>
         </div>
         
@@ -98,8 +101,12 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-3">
             <!-- Detect ATS - Primary -->
             <button @click="runDetectAts(false)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('detect_ats')"
+                    :class="isRunning('detect_ats') ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1 relative">
+                <template x-if="isRunning('detect_ats')">
+                    <span class="absolute top-1 right-1 w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                </template>
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                 </svg>
@@ -108,8 +115,12 @@
             
             <!-- Find Jobs - Primary -->
             <button @click="runCrawl(false)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('crawl_all')"
+                    :class="isRunning('crawl_all') ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1 relative">
+                <template x-if="isRunning('crawl_all')">
+                    <span class="absolute top-1 right-1 w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                </template>
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
                 </svg>
@@ -118,8 +129,12 @@
             
             <!-- Get Descriptions - Primary -->
             <button @click="runEnrich(false)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('enrich_all')"
+                    :class="isRunning('enrich_all') ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1 relative">
+                <template x-if="isRunning('enrich_all')">
+                    <span class="absolute top-1 right-1 w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                </template>
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                 </svg>
@@ -128,8 +143,12 @@
             
             <!-- Generate Embeddings - Primary -->
             <button @click="runEmbeddings()" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('embeddings')"
+                    :class="isRunning('embeddings') ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1 relative">
+                <template x-if="isRunning('embeddings')">
+                    <span class="absolute top-1 right-1 w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                </template>
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
                 </svg>
@@ -141,8 +160,9 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             <!-- Detect ATS + Retry -->
             <button @click="runDetectAts(true)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('detect_ats')"
+                    :class="isRunning('detect_ats') ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                 </svg>
@@ -151,8 +171,9 @@
             
             <!-- Find Jobs + Cascade -->
             <button @click="runCrawl(true)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-blue-100 hover:bg-blue-200 disabled:opacity-50 text-blue-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('crawl_all') || isRunning('full_pipeline')"
+                    :class="(isRunning('crawl_all') || isRunning('full_pipeline')) ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
                 </svg>
@@ -161,8 +182,9 @@
             
             <!-- Enrich + Cascade -->
             <button @click="runEnrich(true)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-purple-100 hover:bg-purple-200 disabled:opacity-50 text-purple-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('enrich_all') || isRunning('full_pipeline')"
+                    :class="(isRunning('enrich_all') || isRunning('full_pipeline')) ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
                 </svg>
@@ -171,8 +193,12 @@
             
             <!-- Custom Crawl (Playwright) -->
             <button @click="runCustomCrawl(false)" 
-                    :disabled="pipelineRunning"
-                    class="px-4 py-3 bg-red-100 hover:bg-red-200 disabled:opacity-50 text-red-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                    :disabled="isRunning('custom_crawl')"
+                    :class="isRunning('custom_crawl') ? 'opacity-50 cursor-not-allowed' : ''"
+                    class="px-4 py-3 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1 relative">
+                <template x-if="isRunning('custom_crawl')">
+                    <span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                </template>
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                 </svg>
@@ -387,14 +413,25 @@ function pipelineApp() {
         stats: {},
         runs: [],
         stageFilter: '',
-        pipelineRunning: false,
+        runningOperations: {},  // Track which operations are running
         selectedRun: null,
         refreshInterval: null,
+        
+        // Check if a specific operation type is running
+        isRunning(opType) {
+            return !!this.runningOperations[opType];
+        },
+        
+        // Check if any operation is running (for general status indicator)
+        get anyRunning() {
+            return Object.keys(this.runningOperations).length > 0;
+        },
         
         async init() {
             await Promise.all([
                 this.loadStats(),
-                this.loadRuns()
+                this.loadRuns(),
+                this.loadOperations()
             ]);
             this.startAutoRefresh();
         },
@@ -402,10 +439,22 @@ function pipelineApp() {
         startAutoRefresh() {
             this.refreshInterval = setInterval(() => {
                 this.loadStats();
-                if (this.pipelineRunning || this.runs.some(r => r.status === 'running')) {
+                this.loadOperations();
+                if (this.anyRunning || this.runs.some(r => r.status === 'running')) {
                     this.loadRuns();
                 }
-            }, 5000);
+            }, 3000);
+        },
+        
+        async loadOperations() {
+            try {
+                const res = await fetch('/api/admin/pipeline/operations');
+                if (res.ok) {
+                    this.runningOperations = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load operations:', e);
+            }
         },
         
         async loadStats() {
@@ -429,7 +478,6 @@ function pipelineApp() {
                 if (res.ok) {
                     const data = await res.json();
                     this.runs = data.runs || [];
-                    this.pipelineRunning = this.runs.some(r => r.status === 'running');
                 }
             } catch (e) {
                 console.error('Failed to load runs:', e);
@@ -437,67 +485,77 @@ function pipelineApp() {
         },
         
         async runDetectAts(includeRetries = false) {
-            this.pipelineRunning = true;
             try {
                 const res = await fetch(`/api/admin/pipeline/detect-ats?limit=100&include_retries=${includeRetries}`, { method: 'POST' });
                 const data = await res.json();
-                showMessage(data.message || 'ATS detection started', 'success');
-                await this.loadRuns();
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'ATS detection started', 'success');
+                }
+                await Promise.all([this.loadRuns(), this.loadOperations()]);
             } catch (e) {
                 showMessage(`Failed: ${e.message}`, 'error');
-                this.pipelineRunning = false;
             }
         },
         
         async runCustomCrawl(withEnrich = false) {
-            this.pipelineRunning = true;
             try {
                 const res = await fetch(`/api/admin/pipeline/crawl-custom?limit=50&mark_exhausted=true&enrich=${withEnrich}`, { method: 'POST' });
                 const data = await res.json();
-                showMessage(data.message || 'Custom crawl started', 'success');
-                await this.loadRuns();
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Custom crawl started', 'success');
+                }
+                await Promise.all([this.loadRuns(), this.loadOperations()]);
             } catch (e) {
                 showMessage(`Failed: ${e.message}`, 'error');
-                this.pipelineRunning = false;
             }
         },
         
         async runCrawl(cascade = false) {
-            this.pipelineRunning = true;
             try {
                 const res = await fetch(`/api/admin/pipeline/crawl?limit=100&cascade=${cascade}`, { method: 'POST' });
                 const data = await res.json();
-                showMessage(data.message || 'Crawl started', 'success');
-                await this.loadRuns();
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Crawl started', 'success');
+                }
+                await Promise.all([this.loadRuns(), this.loadOperations()]);
             } catch (e) {
                 showMessage(`Failed: ${e.message}`, 'error');
-                this.pipelineRunning = false;
             }
         },
         
         async runEnrich(cascade = false) {
-            this.pipelineRunning = true;
             try {
-                const res = await fetch(`/api/admin/pipeline/enrich?limit=500&cascade=${cascade}`, { method: 'POST' });
+                const res = await fetch(`/api/admin/pipeline/enrich?cascade=${cascade}`, { method: 'POST' });
                 const data = await res.json();
-                showMessage(data.message || 'Enrichment started', 'success');
-                await this.loadRuns();
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Enrichment started', 'success');
+                }
+                await Promise.all([this.loadRuns(), this.loadOperations()]);
             } catch (e) {
                 showMessage(`Failed: ${e.message}`, 'error');
-                this.pipelineRunning = false;
             }
         },
         
         async runEmbeddings() {
-            this.pipelineRunning = true;
             try {
                 const res = await fetch('/api/admin/pipeline/embeddings?batch_size=100', { method: 'POST' });
                 const data = await res.json();
-                showMessage(data.message || 'Embeddings generation started', 'success');
-                await this.loadRuns();
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'Embeddings generation started', 'success');
+                }
+                await Promise.all([this.loadRuns(), this.loadOperations()]);
             } catch (e) {
                 showMessage(`Failed: ${e.message}`, 'error');
-                this.pipelineRunning = false;
             }
         },
         

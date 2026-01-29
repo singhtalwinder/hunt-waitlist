@@ -157,12 +157,14 @@ async def reprocess_extraction(
 @router.post("/enrich/trigger", response_model=TriggerResponse)
 async def trigger_enrichment(
     company_id: Optional[UUID] = None,
-    limit: int = 50,
+    limit: Optional[int] = None,
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger job enrichment to fetch missing descriptions."""
     from app.engines.enrich.service import enrich_jobs_without_descriptions
+
+    limit_msg = f"limit: {limit}" if limit else "no limit"
 
     if company_id:
         result = await db.execute(select(Company).where(Company.id == company_id))
@@ -177,7 +179,7 @@ async def trigger_enrichment(
         )
         return TriggerResponse(
             status="triggered",
-            message=f"Enrichment triggered for {company.name} (limit: {limit})",
+            message=f"Enrichment triggered for {company.name} ({limit_msg})",
         )
 
     else:
@@ -187,7 +189,7 @@ async def trigger_enrichment(
         )
         return TriggerResponse(
             status="triggered",
-            message=f"Enrichment triggered for all jobs without descriptions (limit: {limit})",
+            message=f"Enrichment triggered for all jobs without descriptions ({limit_msg})",
         )
 
 
