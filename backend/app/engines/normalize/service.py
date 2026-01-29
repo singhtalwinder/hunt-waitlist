@@ -35,6 +35,7 @@ def get_gemini_embedding(text: str) -> Optional[List[float]]:
             model="models/text-embedding-004",
             content=text,
             task_type="retrieval_document",
+            output_dimensionality=384,
         )
         return result['embedding']
     except Exception as e:
@@ -54,6 +55,7 @@ def get_gemini_embeddings_batch(texts: List[str]) -> List[Optional[List[float]]]
             model="models/text-embedding-004",
             content=texts,
             task_type="retrieval_document",
+            output_dimensionality=384,
         )
         return result['embedding']
     except Exception as e:
@@ -369,7 +371,8 @@ async def generate_embeddings_batch(batch_size: int = 100) -> dict:
         # Find jobs without embeddings
         result = await db.execute(
             select(Job)
-            .where(Job.embedding == None)
+            .where(Job.embedding.is_(None))
+            .where(Job.is_active == True)
             .limit(batch_size)
         )
         jobs = result.scalars().all()
@@ -396,10 +399,13 @@ async def generate_embeddings_batch(batch_size: int = 100) -> dict:
         await db.commit()
         
         # Count remaining
-        result = await db.execute(
-            select(Job).where(Job.embedding == None)
+        from sqlalchemy import func
+        remaining_result = await db.execute(
+            select(func.count(Job.id))
+            .where(Job.embedding.is_(None))
+            .where(Job.is_active == True)
         )
-        remaining = len(result.scalars().all())
+        remaining = remaining_result.scalar() or 0
         
         logger.info(
             "Embeddings generated via Gemini",

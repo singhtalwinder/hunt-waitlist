@@ -1257,7 +1257,9 @@ async def get_embedding_stats(db: AsyncSession = Depends(get_db)):
         SELECT 
             COUNT(*) as total_jobs,
             COUNT(CASE WHEN embedding IS NOT NULL THEN 1 END) as with_embeddings,
-            COUNT(CASE WHEN embedding IS NULL THEN 1 END) as without_embeddings
+            COUNT(CASE WHEN embedding IS NULL THEN 1 END) as without_embeddings,
+            COUNT(CASE WHEN is_active = true AND embedding IS NULL THEN 1 END) as active_without_embeddings,
+            COUNT(CASE WHEN is_active = false AND embedding IS NULL THEN 1 END) as inactive_without_embeddings
         FROM jobs
     '''))
     row = result.fetchone()
@@ -1266,6 +1268,8 @@ async def get_embedding_stats(db: AsyncSession = Depends(get_db)):
         "total_jobs": row[0],
         "with_embeddings": row[1],
         "without_embeddings": row[2],
+        "active_without_embeddings": row[3],
+        "inactive_without_embeddings": row[4],
     }
 
 
@@ -1356,10 +1360,15 @@ async def list_running_operations():
     
     Different operation types can run concurrently (e.g., discovery + crawl_greenhouse + embeddings).
     Same operation type blocks (e.g., can't run two crawl_greenhouse at once).
+    
+    Returns a dict keyed by operation type, e.g.:
+    {"crawl_greenhouse": {...}, "embeddings": {...}}
     """
     from app.engines.pipeline.orchestrator import operation_registry
     
-    return operation_registry.to_dict()
+    # Return just the operations dict, not wrapped in {"running_operations": ..., "count": ...}
+    running_ops = operation_registry.get_running_operations()
+    return {k: v.to_dict() for k, v in running_ops.items()}
 
 
 @router.get("/pipeline/stats")
@@ -1562,7 +1571,7 @@ async def run_pipeline(
     skip_enrichment: bool = Query(False, description="Skip enrichment stage"),
     skip_embeddings: bool = Query(False, description="Skip embeddings stage"),
     crawl_limit: int = Query(100, ge=1, le=500, description="Max companies to crawl"),
-    enrich_limit: int = Query(500, ge=1, le=2000, description="Max jobs to enrich per ATS"),
+    enrich_limit: Optional[int] = Query(None, ge=1, description="Max jobs to enrich per ATS (None = no limit)"),
     embedding_batch_size: int = Query(100, ge=10, le=500, description="Embedding batch size"),
 ):
     """Run the full pipeline (discovery -> crawl -> enrich -> embeddings).
@@ -1707,7 +1716,11 @@ async def run_ats_detection(
 ):
     """Detect ATS type for companies missing it."""
     from app.engines.discovery.ats_detection_service import detect_ats_for_companies
-    from app.engines.pipeline.orchestrator import PipelineOrchestrator
+    from app.engines.pipeline.orchestrator import operation_registry
+    
+    # Check if already running
+    if operation_registry.is_running("detect_ats"):
+        return {"error": "ATS detection already running", "running_operations": operation_registry.to_dict()}
     
     # Create a pipeline run for tracking
     run_id = None
@@ -1724,8 +1737,12 @@ async def run_ats_detection(
     
     async def run_in_background():
         from app.db.session import async_session_factory
-        async with async_session_factory() as session:
-            try:
+        
+        if not await operation_registry.start_operation("detect_ats"):
+            return
+        
+        try:
+            async with async_session_factory() as session:
                 result = await detect_ats_for_companies(
                     session,
                     limit=limit,
@@ -1748,8 +1765,9 @@ async def run_ats_detection(
                         "failed": result["not_detected"] + result["errors"],
                     })
                     await session.commit()
-            except Exception as e:
-                if run_id:
+        except Exception as e:
+            if run_id:
+                async with async_session_factory() as session:
                     await session.execute(text('''
                         UPDATE pipeline_runs
                         SET status = 'failed',
@@ -1759,14 +1777,16 @@ async def run_ats_detection(
                         WHERE id = :id AND status = 'running'
                     '''), {"id": run_id, "error": str(e)})
                     await session.commit()
-                raise
+            raise
+        finally:
+            await operation_registry.end_operation("detect_ats")
     
     background_tasks.add_task(run_in_background)
     
     msg = f"Detecting ATS for up to {limit} companies"
     if include_retries:
         msg += " (including retries)"
-    return {"status": "started", "message": msg, "run_id": str(run_id) if run_id else None}
+    return {"status": "started", "message": msg, "run_id": str(run_id) if run_id else None, "operation_type": "detect_ats"}
 
 
 @router.post("/pipeline/crawl-custom")
@@ -1783,6 +1803,12 @@ async def run_custom_crawl(
     This handles companies where ATS detection failed. Uses browser rendering
     and AI to extract job listings from non-standard career pages.
     """
+    from app.engines.pipeline.orchestrator import operation_registry
+    
+    # Check if already running
+    if operation_registry.is_running("custom_crawl"):
+        return {"error": "Custom crawl already running", "running_operations": operation_registry.to_dict()}
+    
     # Create a pipeline run for tracking
     run_id = None
     try:
@@ -1800,71 +1826,77 @@ async def run_custom_crawl(
         from app.db.session import async_session_maker
         from app.engines.crawl.custom_crawler import CustomCrawlerService
         
-        async with async_session_maker() as session:
-            service = CustomCrawlerService(session)
-            
-            try:
-                # Mark exhausted as custom if requested
-                marked = 0
-                if mark_exhausted:
-                    marked = await service.mark_exhausted_as_custom()
+        if not await operation_registry.start_operation("custom_crawl"):
+            return
+        
+        try:
+            async with async_session_maker() as session:
+                service = CustomCrawlerService(session)
+                
+                try:
+                    # Mark exhausted as custom if requested
+                    marked = 0
+                    if mark_exhausted:
+                        marked = await service.mark_exhausted_as_custom()
+                        if run_id:
+                            await session.execute(text('''
+                                UPDATE pipeline_runs
+                                SET current_step = :step
+                                WHERE id = :id
+                            '''), {
+                                "id": run_id,
+                                "step": f"Marked {marked} companies as custom, now crawling...",
+                            })
+                            await session.commit()
+                    
+                    # Crawl custom companies
+                    crawl_result = await service.crawl_custom_companies(limit=limit)
+                    
+                    # Optionally enrich
+                    enrich_result = {"success": 0, "failed": 0}
+                    if enrich and crawl_result["jobs_found"] > 0:
+                        if run_id:
+                            await session.execute(text('''
+                                UPDATE pipeline_runs
+                                SET current_step = 'Enriching job descriptions...'
+                                WHERE id = :id
+                            '''), {"id": run_id})
+                            await session.commit()
+                        
+                        enrich_result = await service.enrich_custom_jobs(limit=limit * 5)
+                    
+                    # Update pipeline run
                     if run_id:
                         await session.execute(text('''
                             UPDATE pipeline_runs
-                            SET current_step = :step
+                            SET status = 'completed',
+                                completed_at = NOW(),
+                                processed = :processed,
+                                failed = :failed,
+                                current_step = NULL
                             WHERE id = :id
                         '''), {
                             "id": run_id,
-                            "step": f"Marked {marked} companies as custom, now crawling...",
+                            "processed": crawl_result["jobs_found"] + enrich_result.get("success", 0),
+                            "failed": crawl_result["errors"] + enrich_result.get("failed", 0),
                         })
                         await session.commit()
-                
-                # Crawl custom companies
-                crawl_result = await service.crawl_custom_companies(limit=limit)
-                
-                # Optionally enrich
-                enrich_result = {"success": 0, "failed": 0}
-                if enrich and crawl_result["jobs_found"] > 0:
+                        
+                except Exception as e:
                     if run_id:
                         await session.execute(text('''
                             UPDATE pipeline_runs
-                            SET current_step = 'Enriching job descriptions...'
+                            SET status = 'failed',
+                                completed_at = NOW(),
+                                error = :error
                             WHERE id = :id
-                        '''), {"id": run_id})
+                        '''), {"id": run_id, "error": str(e)})
                         await session.commit()
-                    
-                    enrich_result = await service.enrich_custom_jobs(limit=limit * 5)
-                
-                # Update pipeline run
-                if run_id:
-                    await session.execute(text('''
-                        UPDATE pipeline_runs
-                        SET status = 'completed',
-                            completed_at = NOW(),
-                            processed = :processed,
-                            failed = :failed,
-                            current_step = NULL
-                        WHERE id = :id
-                    '''), {
-                        "id": run_id,
-                        "processed": crawl_result["jobs_found"] + enrich_result.get("success", 0),
-                        "failed": crawl_result["errors"] + enrich_result.get("failed", 0),
-                    })
-                    await session.commit()
-                    
-            except Exception as e:
-                if run_id:
-                    await session.execute(text('''
-                        UPDATE pipeline_runs
-                        SET status = 'failed',
-                            completed_at = NOW(),
-                            error = :error
-                        WHERE id = :id
-                    '''), {"id": run_id, "error": str(e)})
-                    await session.commit()
-                raise
-            finally:
-                await service.close()
+                    raise
+                finally:
+                    await service.close()
+        finally:
+            await operation_registry.end_operation("custom_crawl")
     
     background_tasks.add_task(run_in_background)
     
@@ -1873,7 +1905,7 @@ async def run_custom_crawl(
         msg += " (marking exhausted as custom)"
     if enrich:
         msg += " + enriching descriptions"
-    return {"status": "started", "message": msg, "run_id": str(run_id) if run_id else None}
+    return {"status": "started", "message": msg, "run_id": str(run_id) if run_id else None, "operation_type": "custom_crawl"}
 
 
 @router.post("/pipeline/crawl")
@@ -1970,7 +2002,7 @@ async def run_enrich_only(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     ats_type: Optional[str] = Query(None, description="Specific ATS type to enrich (allows concurrent enrichment of different ATS)"),
-    limit: int = Query(500, ge=1, le=2000, description="Max jobs to enrich per ATS"),
+    limit: Optional[int] = Query(None, ge=1, description="Max jobs to enrich per ATS (None = no limit)"),
     cascade: bool = Query(False, description="Also run embeddings after"),
 ):
     """Run the enrichment stage, optionally followed by embeddings.
@@ -1991,10 +2023,11 @@ async def run_enrich_only(
     
     # Create a pipeline run for tracking
     stage_name = f"enrich_{ats_type}" if ats_type else "enrich"
+    limit_msg = f"up to {limit}" if limit else "all"
     run_id = await create_pipeline_run(
         db,
         stage=stage_name,
-        current_step=f"Starting enrichment for up to {limit} {ats_type or 'all'} jobs",
+        current_step=f"Starting enrichment for {limit_msg} {ats_type or 'all'} jobs",
         cascade=cascade,
     )
     
@@ -2042,7 +2075,8 @@ async def run_enrich_only(
     
     background_tasks.add_task(run_in_background)
     
-    msg = f"Enriching up to {limit} {ats_type or 'all'} jobs"
+    limit_desc = f"up to {limit}" if limit else "all"
+    msg = f"Enriching {limit_desc} {ats_type or 'all'} jobs"
     if cascade:
         msg += ", then generating embeddings"
     return {
