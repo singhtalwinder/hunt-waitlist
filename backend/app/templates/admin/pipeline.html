@@ -1,0 +1,563 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Pipeline{% endblock %}
+{% block header %}Pipeline{% endblock %}
+
+{% block content %}
+<div x-data="pipelineApp()" x-init="init()">
+    <!-- Message Container -->
+    <div id="message-container" class="mb-4 lg:mb-6"></div>
+    
+    <!-- Pipeline Stats -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-6 lg:mb-8">
+        <!-- Companies Pending ATS Detection -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Pending ATS Detection</p>
+                    <p class="text-3xl lg:text-4xl font-bold text-black mt-1" x-text="stats.companies_pending_ats?.toLocaleString() || 0"></p>
+                    <div class="flex items-center gap-2 mt-1">
+                        <span class="text-xs text-gray-400" x-text="(stats.ats_never_tried || 0).toLocaleString() + ' new'"></span>
+                        <span class="text-xs text-gray-300">•</span>
+                        <span class="text-xs text-amber-500" x-text="(stats.ats_tried_pending || 0).toLocaleString() + ' retry'"></span>
+                        <span class="text-xs text-gray-300">•</span>
+                        <span class="text-xs text-red-400" x-text="(stats.ats_exhausted || 0).toLocaleString() + ' failed'"></span>
+                    </div>
+                </div>
+                <div class="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Companies Ready to Crawl -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Ready to Crawl</p>
+                    <p class="text-3xl lg:text-4xl font-bold text-black mt-1" x-text="stats.companies_ready_to_crawl?.toLocaleString() || 0"></p>
+                    <p class="text-xs text-gray-400 mt-1">ATS detected, never crawled</p>
+                </div>
+                <div class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Jobs Missing Descriptions -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Missing Descriptions</p>
+                    <p class="text-3xl lg:text-4xl font-bold text-black mt-1" x-text="stats.jobs_missing_description?.toLocaleString() || 0"></p>
+                    <p class="text-xs text-gray-400 mt-1">Jobs need enrichment</p>
+                </div>
+                <div class="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Jobs Missing Embeddings -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Missing Embeddings</p>
+                    <p class="text-3xl lg:text-4xl font-bold text-black mt-1" x-text="stats.jobs_missing_embeddings?.toLocaleString() || 0"></p>
+                    <p class="text-xs text-gray-400 mt-1">Jobs need vectors</p>
+                </div>
+                <div class="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Pipeline Actions -->
+    <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6 mb-6 lg:mb-8">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="text-lg font-semibold text-black">Run Pipeline</h2>
+                <p class="text-sm text-gray-500">Process companies and jobs through the pipeline</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-gray-500" x-text="pipelineRunning ? 'Running...' : 'Idle'"></span>
+                <span class="w-2 h-2 rounded-full" :class="pipelineRunning ? 'bg-orange-500 animate-pulse' : 'bg-gray-300'"></span>
+            </div>
+        </div>
+        
+        <!-- Primary Actions Row -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-3">
+            <!-- Detect ATS - Primary -->
+            <button @click="runDetectAts(false)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                </svg>
+                <span>Detect ATS</span>
+            </button>
+            
+            <!-- Find Jobs - Primary -->
+            <button @click="runCrawl(false)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                </svg>
+                <span>Find Jobs</span>
+            </button>
+            
+            <!-- Get Descriptions - Primary -->
+            <button @click="runEnrich(false)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                <span>Get Descriptions</span>
+            </button>
+            
+            <!-- Generate Embeddings - Primary -->
+            <button @click="runEmbeddings()" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
+                </svg>
+                <span>Embeddings</span>
+            </button>
+        </div>
+        
+        <!-- Secondary Actions Row -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <!-- Detect ATS + Retry -->
+            <button @click="runDetectAts(true)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                <span>+ Retry Failed</span>
+            </button>
+            
+            <!-- Find Jobs + Cascade -->
+            <button @click="runCrawl(true)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-blue-100 hover:bg-blue-200 disabled:opacity-50 text-blue-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
+                </svg>
+                <span>+ Enrich + Embed</span>
+            </button>
+            
+            <!-- Enrich + Cascade -->
+            <button @click="runEnrich(true)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-purple-100 hover:bg-purple-200 disabled:opacity-50 text-purple-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
+                </svg>
+                <span>+ Embeddings</span>
+            </button>
+            
+            <!-- Custom Crawl (Playwright) -->
+            <button @click="runCustomCrawl(false)" 
+                    :disabled="pipelineRunning"
+                    class="px-4 py-3 bg-red-100 hover:bg-red-200 disabled:opacity-50 text-red-700 rounded-lg font-medium transition-colors text-sm flex flex-col items-center gap-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                </svg>
+                <span>Custom Crawl (AI)</span>
+            </button>
+        </div>
+    </div>
+    
+    <!-- Pipeline Runs Log -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div class="px-4 lg:px-6 py-3 lg:py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 class="text-base lg:text-lg font-semibold text-black">Pipeline Runs</h2>
+            <div class="flex items-center gap-2">
+                <select x-model="stageFilter" @change="loadRuns()" 
+                        class="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20">
+                    <option value="">All Stages</option>
+                    <option value="detect_ats">Detect ATS</option>
+                    <option value="crawl">Find Jobs</option>
+                    <option value="custom_crawl">Custom Crawl</option>
+                    <option value="enrich">Get Descriptions</option>
+                    <option value="embeddings">Embeddings</option>
+                </select>
+                <button @click="loadRuns()" class="p-1.5 text-gray-500 hover:text-black transition-colors" title="Refresh">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Runs List -->
+        <div class="divide-y divide-gray-100">
+            <template x-for="run in runs" :key="run.id">
+                <div @click="openRunDetail(run)" 
+                     class="p-4 hover:bg-gray-50 cursor-pointer transition-colors">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex items-center gap-3 min-w-0 flex-1">
+                            <!-- Status indicator -->
+                                <div class="flex-shrink-0">
+                                    <template x-if="run.status === 'running'">
+                                        <div class="w-3 h-3 bg-orange-500 rounded-full animate-pulse"></div>
+                                    </template>
+                                    <template x-if="run.status === 'completed'">
+                                        <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                                    </template>
+                                    <template x-if="run.status === 'failed'">
+                                        <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                                    </template>
+                                    <template x-if="run.status === 'cancelled'">
+                                        <div class="w-3 h-3 bg-gray-400 rounded-full"></div>
+                                    </template>
+                                </div>
+                            
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="font-medium text-black text-sm" x-text="formatStageName(run.stage)"></span>
+                                    <span class="px-2 py-0.5 text-xs font-medium rounded-full"
+                                          :class="{
+                                              'bg-orange-100 text-orange-700': run.status === 'running',
+                                              'bg-green-100 text-green-700': run.status === 'completed',
+                                              'bg-red-100 text-red-700': run.status === 'failed',
+                                              'bg-gray-100 text-gray-700': run.status === 'cancelled'
+                                          }"
+                                          x-text="run.status"></span>
+                                    <!-- Cancel button for running runs -->
+                                    <template x-if="run.status === 'running'">
+                                        <button @click.stop="cancelRun(run.id)" 
+                                                class="ml-2 px-2 py-0.5 text-xs font-medium rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                                                title="Cancel this run">
+                                            Cancel
+                                        </button>
+                                    </template>
+                                    <template x-if="run.cascade">
+                                        <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700">
+                                            cascade
+                                        </span>
+                                    </template>
+                                </div>
+                                <div class="text-xs text-gray-500">
+                                    <span x-text="formatDate(run.started_at)"></span>
+                                    <template x-if="run.status === 'running' && run.current_step">
+                                        <span class="text-cta ml-2" x-text="'• ' + run.current_step"></span>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-center gap-4 text-sm flex-shrink-0">
+                            <div class="text-right hidden sm:block">
+                                <div class="font-medium text-black" x-text="run.processed + ' processed'"></div>
+                                <div class="text-xs text-gray-500" x-text="run.failed + ' failed'"></div>
+                            </div>
+                            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            
+            <div x-show="runs.length === 0" class="p-8 text-center text-gray-500">
+                No pipeline runs yet
+            </div>
+        </div>
+    </div>
+    
+    <!-- Run Detail Modal -->
+    <div x-show="selectedRun" 
+         x-cloak
+         class="fixed inset-0 z-50 overflow-hidden"
+         @keydown.escape.window="closeRunDetail()">
+        <!-- Backdrop -->
+        <div class="absolute inset-0 bg-black/50" @click="closeRunDetail()"></div>
+        
+        <!-- Panel -->
+        <div class="absolute inset-y-0 right-0 max-w-2xl w-full bg-white shadow-xl flex flex-col">
+            <!-- Header -->
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-black" x-text="selectedRun ? formatStageName(selectedRun.stage) : ''"></h3>
+                    <p class="text-sm text-gray-500" x-text="selectedRun ? formatDate(selectedRun.started_at) : ''"></p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="px-3 py-1 text-sm font-medium rounded-full"
+                          :class="{
+                              'bg-orange-100 text-orange-700': selectedRun?.status === 'running',
+                              'bg-green-100 text-green-700': selectedRun?.status === 'completed',
+                              'bg-red-100 text-red-700': selectedRun?.status === 'failed',
+                              'bg-gray-100 text-gray-700': selectedRun?.status === 'cancelled'
+                          }"
+                          x-text="selectedRun?.status || ''"></span>
+                    <!-- Cancel button in modal -->
+                    <template x-if="selectedRun?.status === 'running'">
+                        <button @click="cancelRun(selectedRun.id)" 
+                                class="px-3 py-1 text-sm font-medium rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
+                            Cancel
+                        </button>
+                    </template>
+                    <button @click="closeRunDetail()" class="p-2 text-gray-500 hover:text-black">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Stats -->
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200 grid grid-cols-3 gap-4">
+                <div>
+                    <p class="text-xs text-gray-500">Processed</p>
+                    <p class="text-lg font-semibold text-black" x-text="selectedRun?.processed || 0"></p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500">Failed</p>
+                    <p class="text-lg font-semibold" :class="selectedRun?.failed > 0 ? 'text-red-600' : 'text-gray-600'" x-text="selectedRun?.failed || 0"></p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500">Duration</p>
+                    <p class="text-lg font-semibold text-gray-600" x-text="selectedRun?.duration || '-'"></p>
+                </div>
+            </div>
+            
+            <!-- Current Step (for running) -->
+            <template x-if="selectedRun?.status === 'running' && selectedRun?.current_step">
+                <div class="px-6 py-3 bg-orange-50 border-b border-orange-100">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-cta animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <span class="text-sm text-cta font-medium" x-text="selectedRun.current_step"></span>
+                    </div>
+                </div>
+            </template>
+            
+            <!-- Error Message -->
+            <template x-if="selectedRun?.error">
+                <div class="px-6 py-3 bg-red-50 border-b border-red-100">
+                    <p class="text-sm text-red-700" x-text="selectedRun.error"></p>
+                </div>
+            </template>
+            
+            <!-- Logs -->
+            <div class="flex-1 overflow-y-auto px-6 py-4">
+                <h4 class="text-sm font-medium text-gray-700 mb-3">Activity Log</h4>
+                <div class="space-y-2">
+                    <template x-for="(log, index) in (selectedRun?.logs || []).slice().reverse()" :key="index">
+                        <div class="flex gap-3 text-sm">
+                            <span class="text-gray-400 text-xs whitespace-nowrap mt-0.5" x-text="formatLogTime(log.ts)"></span>
+                            <div class="flex-1 min-w-0">
+                                <span :class="{
+                                    'text-gray-700': log.level === 'info',
+                                    'text-amber-600': log.level === 'warn',
+                                    'text-red-600': log.level === 'error'
+                                }" x-text="log.msg"></span>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="!selectedRun?.logs?.length" class="text-gray-500 text-sm">
+                        No log entries yet
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function pipelineApp() {
+    return {
+        stats: {},
+        runs: [],
+        stageFilter: '',
+        pipelineRunning: false,
+        selectedRun: null,
+        refreshInterval: null,
+        
+        async init() {
+            await Promise.all([
+                this.loadStats(),
+                this.loadRuns()
+            ]);
+            this.startAutoRefresh();
+        },
+        
+        startAutoRefresh() {
+            this.refreshInterval = setInterval(() => {
+                this.loadStats();
+                if (this.pipelineRunning || this.runs.some(r => r.status === 'running')) {
+                    this.loadRuns();
+                }
+            }, 5000);
+        },
+        
+        async loadStats() {
+            try {
+                const res = await fetch('/api/admin/pipeline/stats');
+                if (res.ok) {
+                    this.stats = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        },
+        
+        async loadRuns() {
+            try {
+                let url = '/api/admin/pipeline/runs?limit=50';
+                if (this.stageFilter) {
+                    url += `&stage=${this.stageFilter}`;
+                }
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    this.runs = data.runs || [];
+                    this.pipelineRunning = this.runs.some(r => r.status === 'running');
+                }
+            } catch (e) {
+                console.error('Failed to load runs:', e);
+            }
+        },
+        
+        async runDetectAts(includeRetries = false) {
+            this.pipelineRunning = true;
+            try {
+                const res = await fetch(`/api/admin/pipeline/detect-ats?limit=100&include_retries=${includeRetries}`, { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message || 'ATS detection started', 'success');
+                await this.loadRuns();
+            } catch (e) {
+                showMessage(`Failed: ${e.message}`, 'error');
+                this.pipelineRunning = false;
+            }
+        },
+        
+        async runCustomCrawl(withEnrich = false) {
+            this.pipelineRunning = true;
+            try {
+                const res = await fetch(`/api/admin/pipeline/crawl-custom?limit=50&mark_exhausted=true&enrich=${withEnrich}`, { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message || 'Custom crawl started', 'success');
+                await this.loadRuns();
+            } catch (e) {
+                showMessage(`Failed: ${e.message}`, 'error');
+                this.pipelineRunning = false;
+            }
+        },
+        
+        async runCrawl(cascade = false) {
+            this.pipelineRunning = true;
+            try {
+                const res = await fetch(`/api/admin/pipeline/crawl?limit=100&cascade=${cascade}`, { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message || 'Crawl started', 'success');
+                await this.loadRuns();
+            } catch (e) {
+                showMessage(`Failed: ${e.message}`, 'error');
+                this.pipelineRunning = false;
+            }
+        },
+        
+        async runEnrich(cascade = false) {
+            this.pipelineRunning = true;
+            try {
+                const res = await fetch(`/api/admin/pipeline/enrich?limit=500&cascade=${cascade}`, { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message || 'Enrichment started', 'success');
+                await this.loadRuns();
+            } catch (e) {
+                showMessage(`Failed: ${e.message}`, 'error');
+                this.pipelineRunning = false;
+            }
+        },
+        
+        async runEmbeddings() {
+            this.pipelineRunning = true;
+            try {
+                const res = await fetch('/api/admin/pipeline/embeddings?batch_size=100', { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message || 'Embeddings generation started', 'success');
+                await this.loadRuns();
+            } catch (e) {
+                showMessage(`Failed: ${e.message}`, 'error');
+                this.pipelineRunning = false;
+            }
+        },
+        
+        openRunDetail(run) {
+            this.selectedRun = run;
+        },
+        
+        closeRunDetail() {
+            this.selectedRun = null;
+        },
+        
+        async cancelRun(runId) {
+            if (!confirm('Are you sure you want to cancel this run?')) return;
+            try {
+                const res = await fetch(`/api/admin/pipeline/runs/${runId}/cancel`, { method: 'POST' });
+                if (res.ok) {
+                    showMessage('Run cancelled', 'success');
+                    await this.loadRuns();
+                    // Update selected run if it's the one we cancelled
+                    if (this.selectedRun?.id === runId) {
+                        const updated = this.runs.find(r => r.id === runId);
+                        if (updated) this.selectedRun = updated;
+                    }
+                } else {
+                    const data = await res.json();
+                    showMessage(data.detail || 'Failed to cancel', 'error');
+                }
+            } catch (e) {
+                showMessage(`Failed to cancel: ${e.message}`, 'error');
+            }
+        },
+        
+        formatStageName(stage) {
+            const names = {
+                'detect_ats': 'Detect ATS',
+                'crawl': 'Find Jobs',
+                'custom_crawl': 'Custom Crawl',
+                'enrich': 'Get Descriptions',
+                'embeddings': 'Generate Embeddings'
+            };
+            return names[stage] || stage;
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diff = now - date;
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+        
+        formatLogTime(ts) {
+            if (!ts) return '';
+            const date = new Date(ts);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+    };
+}
+</script>
+{% endblock %}

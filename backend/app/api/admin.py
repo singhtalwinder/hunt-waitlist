@@ -406,36 +406,52 @@ async def run_discovery(
 ):
     """Trigger a discovery run.
     
+    CONCURRENT EXECUTION:
+    - Discovery can run concurrently with crawl, enrich, and embeddings.
+    - Discovery hits company websites (stripe.com, etc.), not ATS infrastructure.
+    
     By default, tries to queue via Dramatiq (requires Redis).
     Set sync=true to run synchronously (useful for testing without Redis).
     
     For network_crawler: by default, only crawls companies that have never been
     crawled before. Set force_network_recrawl=true to re-crawl all companies.
     """
+    from app.engines.pipeline.orchestrator import operation_registry
+    
+    # Check if discovery is already running
+    if operation_registry.is_running("discovery"):
+        return {"error": "Discovery already running", "running_operations": operation_registry.to_dict()}
+    
     if sync:
-        # Run synchronously
+        # Run synchronously (still uses operation registry)
         from app.engines.discovery.orchestrator import DiscoveryOrchestrator
         
-        orchestrator = DiscoveryOrchestrator(db)
-        stats = await orchestrator.run_discovery(
-            source_names=source_names,
-            force_network_recrawl=force_network_recrawl,
-        )
+        if not await operation_registry.start_operation("discovery"):
+            return {"error": "Discovery already running"}
         
-        return {
-            "status": "completed",
-            "results": [
-                {
-                    "source": s.source,
-                    "total_discovered": s.total_discovered,
-                    "new_companies": s.new_companies,
-                    "duplicates": s.skipped_duplicates,
-                    "filtered_non_us": s.filtered_non_us,
-                    "errors": s.errors,
-                }
-                for s in stats
-            ],
-        }
+        try:
+            orchestrator = DiscoveryOrchestrator(db)
+            stats = await orchestrator.run_discovery(
+                source_names=source_names,
+                force_network_recrawl=force_network_recrawl,
+            )
+            
+            return {
+                "status": "completed",
+                "results": [
+                    {
+                        "source": s.source,
+                        "total_discovered": s.total_discovered,
+                        "new_companies": s.new_companies,
+                        "duplicates": s.skipped_duplicates,
+                        "filtered_non_us": s.filtered_non_us,
+                        "errors": s.errors,
+                    }
+                    for s in stats
+                ],
+            }
+        finally:
+            await operation_registry.end_operation("discovery")
     
     # Try to queue via Dramatiq
     try:
@@ -445,28 +461,32 @@ async def run_discovery(
             "status": "queued",
             "message": f"Discovery task queued for sources: {source_names or 'all'}" + 
                        (" (force recrawl)" if force_network_recrawl else ""),
+            "operation_type": "discovery",
         }
     except Exception as e:
-        # Dramatiq/Redis not available, run synchronously
-        from app.engines.discovery.orchestrator import DiscoveryOrchestrator
+        # Dramatiq/Redis not available, run in background
+        async def run_discovery_background():
+            from app.engines.discovery.orchestrator import DiscoveryOrchestrator
+            
+            if not await operation_registry.start_operation("discovery"):
+                return
+            
+            try:
+                async with async_session_factory() as session:
+                    orchestrator = DiscoveryOrchestrator(session)
+                    await orchestrator.run_discovery(
+                        source_names=source_names,
+                        force_network_recrawl=force_network_recrawl,
+                    )
+            finally:
+                await operation_registry.end_operation("discovery")
         
-        orchestrator = DiscoveryOrchestrator(db)
-        stats = await orchestrator.run_discovery(
-            source_names=source_names,
-            force_network_recrawl=force_network_recrawl,
-        )
+        background_tasks.add_task(run_discovery_background)
         
         return {
-            "status": "completed",
-            "message": "Redis not available, ran synchronously",
-            "results": [
-                {
-                    "source": s.source,
-                    "total_discovered": s.total_discovered,
-                    "new_companies": s.new_companies,
-                }
-                for s in stats
-            ],
+            "status": "started",
+            "message": f"Discovery started in background for sources: {source_names or 'all'}",
+            "operation_type": "discovery",
         }
 
 
@@ -1206,19 +1226,22 @@ async def crawl_single_company(
     
     engine = CrawlEngine(db)
     try:
-        snapshot = await engine.crawl_company(company_id)
+        result = await engine.crawl_company(company_id)
         await engine.close()
         
-        if snapshot:
+        if result.get("status") == "success":
+            snapshot = result.get("snapshot")
             return {
                 "status": "success",
-                "snapshot_id": str(snapshot.id),
-                "url": snapshot.url,
+                "snapshot_id": str(snapshot.id) if snapshot else None,
+                "url": snapshot.url if snapshot else None,
+                "jobs_extracted": result.get("jobs_extracted", 0),
             }
         else:
             return {
                 "status": "failed",
-                "message": "Could not crawl company",
+                "error": result.get("error", "Unknown error"),
+                "reason": result.get("reason"),
             }
     except Exception as e:
         await engine.close()
@@ -1319,6 +1342,25 @@ async def run_job_enrichment(
 
 
 # ========== Pipeline Management ==========
+
+@router.get("/pipeline/operations")
+async def list_running_operations():
+    """List all currently running operations.
+    
+    Operations are keyed by type:
+    - discovery: Finding new companies (hits company websites)
+    - crawl_greenhouse, crawl_lever, crawl_ashby, etc.: Per-ATS crawling
+    - enrich_greenhouse, enrich_lever, etc.: Per-ATS enrichment  
+    - embeddings: Generating embeddings (hits Gemini API)
+    - full_pipeline: Sequential full pipeline run
+    
+    Different operation types can run concurrently (e.g., discovery + crawl_greenhouse + embeddings).
+    Same operation type blocks (e.g., can't run two crawl_greenhouse at once).
+    """
+    from app.engines.pipeline.orchestrator import operation_registry
+    
+    return operation_registry.to_dict()
+
 
 @router.get("/pipeline/stats")
 async def get_pipeline_stats(db: AsyncSession = Depends(get_db)):
@@ -1460,16 +1502,26 @@ async def cancel_pipeline_run(
 
 @router.get("/pipeline/status")
 async def get_pipeline_status(db: AsyncSession = Depends(get_db)):
-    """Get current pipeline status and statistics."""
-    from app.engines.pipeline.orchestrator import PipelineOrchestrator
+    """Get current pipeline status and statistics.
+    
+    Shows all currently running operations. Multiple operations can run concurrently:
+    - discovery: Finding new companies (hits company websites)
+    - crawl_greenhouse, crawl_lever, crawl_ashby, etc.: Per-ATS crawling
+    - enrich_greenhouse, enrich_lever, etc.: Per-ATS enrichment
+    - embeddings: Generating embeddings (hits Gemini API)
+    """
+    from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
     from app.engines.pipeline.scheduler import scheduler
     
     orchestrator = PipelineOrchestrator()
     pipeline_status = orchestrator.status.to_dict()
     
+    # Get all running operations from the registry
+    running_operations = operation_registry.to_dict()
+    
     # Also check for running pipeline_runs in the database (for detect_ats, custom_crawl, etc.)
     # These run outside the PipelineOrchestrator but we want to show their progress
-    running_run = None
+    running_runs = []
     try:
         result = await db.execute(text('''
             SELECT id, stage, status, started_at, processed, failed, 
@@ -1477,11 +1529,9 @@ async def get_pipeline_status(db: AsyncSession = Depends(get_db)):
             FROM pipeline_runs
             WHERE status = 'running'
             ORDER BY started_at DESC
-            LIMIT 1
         '''))
-        row = result.fetchone()
-        if row:
-            running_run = {
+        for row in result.fetchall():
+            running_runs.append({
                 "id": str(row[0]),
                 "stage": row[1],
                 "status": row[2],
@@ -1491,28 +1541,16 @@ async def get_pipeline_status(db: AsyncSession = Depends(get_db)):
                 "error": row[6],
                 "current_step": row[7],
                 "logs": row[8] or [],
-            }
-            
-            # If orchestrator is idle but we have a running DB pipeline run,
-            # merge the DB run info into the pipeline status
-            if pipeline_status.get("stage") == "idle" and running_run:
-                pipeline_status["stage"] = running_run["stage"]
-                pipeline_status["started_at"] = running_run["started_at"]
-                pipeline_status["current_step"] = running_run["current_step"] or f"Running {running_run['stage']}"
-                pipeline_status["progress"] = {
-                    running_run["stage"]: {
-                        "processed": running_run["processed"],
-                        "failed": running_run["failed"],
-                    }
-                }
+            })
     except Exception as e:
-        logger.debug(f"Could not fetch running pipeline run: {e}")
+        logger.debug(f"Could not fetch running pipeline runs: {e}")
     
     return {
         "pipeline": pipeline_status,
+        "running_operations": running_operations,
+        "running_runs": running_runs,
         "scheduler": scheduler.status,
         "stats": await orchestrator.get_stats(),
-        "running_run": running_run,  # Include the raw running run data
     }
 
 
@@ -1527,13 +1565,18 @@ async def run_pipeline(
     enrich_limit: int = Query(500, ge=1, le=2000, description="Max jobs to enrich per ATS"),
     embedding_batch_size: int = Query(100, ge=10, le=500, description="Embedding batch size"),
 ):
-    """Run the full pipeline (discovery -> crawl -> enrich -> embeddings)."""
-    from app.engines.pipeline.orchestrator import PipelineOrchestrator
+    """Run the full pipeline (discovery -> crawl -> enrich -> embeddings).
+    
+    This runs stages SEQUENTIALLY. For parallel execution of individual stages,
+    use the individual endpoints (/pipeline/crawl, /pipeline/enrich, /pipeline/embeddings).
+    """
+    from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
     
     orchestrator = PipelineOrchestrator()
     
-    if orchestrator.is_running:
-        return {"error": "Pipeline already running", "status": orchestrator.status.to_dict()}
+    # Full pipeline blocks other full pipelines (but individual ops can still run)
+    if operation_registry.is_running("full_pipeline"):
+        return {"error": "Full pipeline already running", "running_operations": operation_registry.to_dict()}
     
     async def run_in_background():
         await orchestrator.run_full_pipeline(
@@ -1550,7 +1593,82 @@ async def run_pipeline(
     
     return {
         "status": "started",
-        "message": "Pipeline started in background. Check /pipeline/status for progress.",
+        "message": "Full pipeline started in background. Check /pipeline/status for progress.",
+        "operation_type": "full_pipeline",
+    }
+
+
+@router.post("/pipeline/crawl-concurrent")
+async def run_concurrent_crawls(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ats_types: List[str] = Query(["greenhouse", "lever", "ashby"], description="ATS types to crawl concurrently"),
+    limit_per_ats: int = Query(50, ge=1, le=200, description="Max companies per ATS type"),
+):
+    """Run crawls for multiple ATS types CONCURRENTLY.
+    
+    This is more efficient than running them sequentially because each ATS
+    has its own rate limits and infrastructure.
+    
+    Example: Crawl greenhouse, lever, and ashby all at the same time.
+    """
+    from app.engines.pipeline.orchestrator import run_concurrent_crawls as do_concurrent_crawls, operation_registry
+    from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run
+    
+    # Check which operations are already running
+    already_running = [ats for ats in ats_types if operation_registry.is_running(f"crawl_{ats}")]
+    if already_running:
+        return {
+            "error": f"Some crawls already running: {already_running}",
+            "running_operations": operation_registry.to_dict(),
+        }
+    
+    # Create a pipeline run for tracking
+    run_id = await create_pipeline_run(
+        db,
+        stage="crawl_concurrent",
+        current_step=f"Starting concurrent crawl for {', '.join(ats_types)}",
+        cascade=False,
+    )
+    
+    async def run_in_background():
+        from app.db.session import async_session_factory
+        try:
+            results = await do_concurrent_crawls(ats_types, limit_per_ats)
+            
+            # Calculate totals
+            total_crawled = sum(r.get("companies_crawled", 0) for r in results.values() if isinstance(r, dict))
+            total_jobs = sum(r.get("jobs_found", 0) for r in results.values() if isinstance(r, dict))
+            total_failed = sum(r.get("failed", 0) for r in results.values() if isinstance(r, dict))
+            
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        processed=total_crawled,
+                        failed=total_failed,
+                        status="completed",
+                    )
+        except Exception as e:
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        status="failed",
+                        error=str(e),
+                    )
+            raise
+    
+    background_tasks.add_task(run_in_background)
+    
+    return {
+        "status": "started",
+        "message": f"Concurrent crawl started for {len(ats_types)} ATS types: {', '.join(ats_types)}",
+        "ats_types": ats_types,
+        "limit_per_ats": limit_per_ats,
+        "run_id": str(run_id) if run_id else None,
     }
 
 
@@ -1761,87 +1879,248 @@ async def run_custom_crawl(
 @router.post("/pipeline/crawl")
 async def run_crawl_only(
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ats_type: Optional[str] = Query(None, description="Specific ATS type to crawl (allows concurrent crawls of different ATS)"),
     limit: int = Query(100, ge=1, le=500, description="Max companies to crawl"),
     cascade: bool = Query(False, description="Also run enrich and embeddings after"),
 ):
-    """Run the crawl stage, optionally followed by enrich and embeddings."""
-    from app.engines.pipeline.orchestrator import PipelineOrchestrator
+    """Run the crawl stage, optionally followed by enrich and embeddings.
+    
+    CONCURRENT EXECUTION:
+    - If ats_type is specified, only that ATS is crawled and other ATS types can run concurrently.
+    - Example: You can run crawl_greenhouse, crawl_lever, and crawl_ashby all at the same time.
+    - If ats_type is not specified, crawls all ATS types (blocks other crawl_all operations).
+    """
+    from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
+    from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run
     
     orchestrator = PipelineOrchestrator()
     
-    if orchestrator.is_running:
-        return {"error": "Pipeline already running"}
+    # Check if this specific operation is already running
+    operation_type = f"crawl_{ats_type}" if ats_type else "crawl_all"
+    if operation_registry.is_running(operation_type):
+        return {"error": f"{operation_type} already running", "running_operations": operation_registry.to_dict()}
+    
+    # Create a pipeline run for tracking
+    stage_name = f"crawl_{ats_type}" if ats_type else "crawl"
+    run_id = await create_pipeline_run(
+        db,
+        stage=stage_name,
+        current_step=f"Starting crawl for up to {limit} {ats_type or 'all'} companies",
+        cascade=cascade,
+    )
     
     async def run_in_background():
-        await orchestrator.run_full_pipeline(
-            skip_discovery=True,
-            skip_enrichment=not cascade,
-            skip_embeddings=not cascade,
-            crawl_limit=limit,
-        )
+        from app.db.session import async_session_factory
+        try:
+            if cascade:
+                # Use full pipeline for cascade mode
+                result = await orchestrator.run_full_pipeline(
+                    skip_discovery=True,
+                    skip_enrichment=False,
+                    skip_embeddings=False,
+                    crawl_limit=limit,
+                    crawl_run_id=run_id,
+                )
+                crawl_result = result.get("crawl", {}) or {}
+            else:
+                # Use standalone crawl for non-cascade mode (allows concurrent ops)
+                crawl_result = await orchestrator.run_crawl_standalone(
+                    ats_type=ats_type,
+                    limit=limit,
+                    run_id=run_id,
+                )
+            
+            # Update pipeline run with final status
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        processed=crawl_result.get("companies_crawled", 0),
+                        failed=crawl_result.get("failed", 0),
+                        status="completed" if not crawl_result.get("cancelled") else "cancelled",
+                    )
+        except Exception as e:
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        status="failed",
+                        error=str(e),
+                    )
+            raise
     
     background_tasks.add_task(run_in_background)
     
-    msg = f"Crawling up to {limit} companies"
+    msg = f"Crawling up to {limit} {ats_type or 'all'} companies"
     if cascade:
         msg += ", then enriching and generating embeddings"
-    return {"status": "started", "message": msg}
+    return {
+        "status": "started",
+        "message": msg,
+        "run_id": str(run_id) if run_id else None,
+        "operation_type": operation_type,
+    }
 
 
 @router.post("/pipeline/enrich")
 async def run_enrich_only(
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ats_type: Optional[str] = Query(None, description="Specific ATS type to enrich (allows concurrent enrichment of different ATS)"),
     limit: int = Query(500, ge=1, le=2000, description="Max jobs to enrich per ATS"),
     cascade: bool = Query(False, description="Also run embeddings after"),
 ):
-    """Run the enrichment stage, optionally followed by embeddings."""
-    from app.engines.pipeline.orchestrator import PipelineOrchestrator
+    """Run the enrichment stage, optionally followed by embeddings.
+    
+    CONCURRENT EXECUTION:
+    - If ats_type is specified, only that ATS is enriched and other ATS types can run concurrently.
+    - Example: You can run enrich_greenhouse, enrich_lever, and enrich_ashby all at the same time.
+    """
+    from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
+    from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run
     
     orchestrator = PipelineOrchestrator()
     
-    if orchestrator.is_running:
-        return {"error": "Pipeline already running"}
+    # Check if this specific operation is already running
+    operation_type = f"enrich_{ats_type}" if ats_type else "enrich_all"
+    if operation_registry.is_running(operation_type):
+        return {"error": f"{operation_type} already running", "running_operations": operation_registry.to_dict()}
+    
+    # Create a pipeline run for tracking
+    stage_name = f"enrich_{ats_type}" if ats_type else "enrich"
+    run_id = await create_pipeline_run(
+        db,
+        stage=stage_name,
+        current_step=f"Starting enrichment for up to {limit} {ats_type or 'all'} jobs",
+        cascade=cascade,
+    )
     
     async def run_in_background():
-        await orchestrator.run_full_pipeline(
-            skip_discovery=True,
-            skip_crawl=True,
-            skip_embeddings=not cascade,
-            enrich_limit=limit,
-        )
+        from app.db.session import async_session_factory
+        try:
+            if cascade:
+                # Use full pipeline for cascade mode
+                result = await orchestrator.run_full_pipeline(
+                    skip_discovery=True,
+                    skip_crawl=True,
+                    skip_embeddings=False,
+                    enrich_limit=limit,
+                    enrich_run_id=run_id,
+                )
+                enrich_result = result.get("enrichment", {}) or {}
+            else:
+                # Use standalone enrich for non-cascade mode (allows concurrent ops)
+                enrich_result = await orchestrator.run_enrich_standalone(
+                    ats_type=ats_type,
+                    limit=limit,
+                    run_id=run_id,
+                )
+            
+            # Update pipeline run with final status
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        processed=enrich_result.get("success", 0),
+                        failed=enrich_result.get("failed", 0),
+                        status="completed" if not enrich_result.get("cancelled") else "cancelled",
+                    )
+        except Exception as e:
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        status="failed",
+                        error=str(e),
+                    )
+            raise
     
     background_tasks.add_task(run_in_background)
     
-    msg = f"Enriching up to {limit} jobs per ATS"
+    msg = f"Enriching up to {limit} {ats_type or 'all'} jobs"
     if cascade:
         msg += ", then generating embeddings"
-    return {"status": "started", "message": msg}
+    return {
+        "status": "started",
+        "message": msg,
+        "run_id": str(run_id) if run_id else None,
+        "operation_type": operation_type,
+    }
 
 
 @router.post("/pipeline/embeddings")
 async def run_embeddings_only(
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
     batch_size: int = Query(100, ge=10, le=500, description="Batch size"),
 ):
-    """Run only the embeddings generation stage."""
-    from app.engines.pipeline.orchestrator import PipelineOrchestrator
+    """Run only the embeddings generation stage.
+    
+    CONCURRENT EXECUTION:
+    - Embeddings can run concurrently with discovery, crawl, and enrich operations.
+    - Uses Gemini API (generativelanguage.googleapis.com), not ATS infrastructure.
+    """
+    from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
+    from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run
     
     orchestrator = PipelineOrchestrator()
     
-    if orchestrator.is_running:
-        return {"error": "Pipeline already running"}
+    # Check if embeddings is already running
+    operation_type = "embeddings"
+    if operation_registry.is_running(operation_type):
+        return {"error": f"{operation_type} already running", "running_operations": operation_registry.to_dict()}
+    
+    # Create a pipeline run for tracking
+    run_id = await create_pipeline_run(
+        db,
+        stage="embeddings",
+        current_step=f"Starting embeddings (batch size: {batch_size})",
+        cascade=False,
+    )
     
     async def run_in_background():
-        await orchestrator.run_full_pipeline(
-            skip_discovery=True,
-            skip_crawl=True,
-            skip_enrichment=True,
-            embedding_batch_size=batch_size,
-        )
+        from app.db.session import async_session_factory
+        try:
+            # Use standalone embeddings method (allows concurrent ops)
+            embed_result = await orchestrator.run_embeddings_standalone(
+                batch_size=batch_size,
+                run_id=run_id,
+            )
+            
+            # Update pipeline run with final status
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        processed=embed_result.get("processed", 0),
+                        failed=0,
+                        status="completed" if not embed_result.get("cancelled") else "cancelled",
+                    )
+        except Exception as e:
+            if run_id:
+                async with async_session_factory() as session:
+                    await complete_pipeline_run(
+                        session,
+                        run_id,
+                        status="failed",
+                        error=str(e),
+                    )
+            raise
     
     background_tasks.add_task(run_in_background)
     
-    return {"status": "started", "message": "Generating embeddings."}
+    return {
+        "status": "started",
+        "message": "Generating embeddings (via Gemini API).",
+        "run_id": str(run_id) if run_id else None,
+        "operation_type": operation_type,
+    }
 
 
 # ========== Stage Detail Endpoints ==========
@@ -2126,7 +2405,7 @@ async def get_analytics(
     db: AsyncSession = Depends(get_db),
 ):
     """Get analytics data for dashboard charts."""
-    from app.db.models import CrawlSnapshot
+    from app.db.models import CrawlSnapshot, MaintenanceRun
     
     now = datetime.utcnow()
     start_date = now - timedelta(days=days)
@@ -2258,3 +2537,298 @@ async def get_analytics(
         sources=sources,
         totals=totals,
     )
+
+
+# ============================================
+# MAINTENANCE ENDPOINTS
+# ============================================
+
+
+class MaintenanceStatsResponse(BaseModel):
+    """Maintenance statistics response."""
+    
+    jobs_pending_verification: int
+    jobs_verified_24h: int
+    jobs_delisted_7d: int
+    companies_pending_maintenance: int
+    companies_maintained_24h: int
+    by_ats: list[dict]
+
+
+class MaintenanceRunResponse(BaseModel):
+    """Maintenance run response (summary without logs)."""
+    
+    id: UUID
+    run_type: str
+    ats_type: Optional[str] = None
+    status: str
+    companies_checked: int
+    jobs_verified: int
+    jobs_new: int
+    jobs_delisted: int
+    jobs_unchanged: int
+    errors: int
+    current_step: Optional[str] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
+class MaintenanceRunDetailResponse(BaseModel):
+    """Maintenance run with full logs."""
+    
+    id: UUID
+    run_type: str
+    ats_type: Optional[str] = None
+    status: str
+    companies_checked: int
+    jobs_verified: int
+    jobs_new: int
+    jobs_delisted: int
+    jobs_unchanged: int
+    errors: int
+    error_message: Optional[str] = None
+    current_step: Optional[str] = None
+    logs: Optional[list] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
+@router.get("/maintenance/stats", response_model=MaintenanceStatsResponse)
+async def get_maintenance_stats(db: AsyncSession = Depends(get_db)):
+    """Get maintenance statistics."""
+    from app.engines.maintenance.service import get_maintenance_stats as _get_stats
+    
+    stats = await _get_stats(db)
+    return MaintenanceStatsResponse(**stats)
+
+
+@router.get("/maintenance/runs")
+async def get_maintenance_runs(
+    db: AsyncSession = Depends(get_db),
+    status: Optional[str] = Query(None),
+    ats_type: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """Get recent maintenance runs."""
+    from app.db import MaintenanceRun
+    
+    query = select(MaintenanceRun).order_by(MaintenanceRun.started_at.desc()).limit(limit)
+    
+    if status:
+        query = query.where(MaintenanceRun.status == status)
+    if ats_type:
+        query = query.where(MaintenanceRun.ats_type == ats_type)
+    
+    result = await db.execute(query)
+    runs = result.scalars().all()
+    
+    return {
+        "runs": [MaintenanceRunResponse.model_validate(run) for run in runs],
+    }
+
+
+@router.get("/maintenance/runs/{run_id}")
+async def get_maintenance_run_detail(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single maintenance run with full logs."""
+    from app.db import MaintenanceRun
+    
+    result = await db.execute(
+        select(MaintenanceRun).where(MaintenanceRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    
+    if not run:
+        raise HTTPException(status_code=404, detail="Maintenance run not found")
+    
+    return MaintenanceRunDetailResponse.model_validate(run)
+
+
+@router.post("/maintenance/run")
+async def run_maintenance(
+    background_tasks: BackgroundTasks,
+    ats_type: Optional[str] = Query(None, description="Filter by ATS type (use 'custom' for Playwright companies)"),
+    limit: int = Query(100, ge=1, le=500, description="Max companies to check"),
+    include_custom: bool = Query(True, description="Include custom/Playwright companies when ats_type is None"),
+    sync: bool = Query(False, description="Run synchronously"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run maintenance to verify job listings.
+    
+    This re-crawls companies to:
+    - Verify existing jobs still exist on the ATS or custom career page
+    - Find new jobs that have been posted
+    - Delist jobs that have been removed (not delete)
+    - Log all operations for audit trail
+    
+    Supports both:
+    - Standard ATS (greenhouse, lever, ashby, workable, etc.)
+    - Custom career pages (using Playwright + LLM) - use ats_type='custom'
+    """
+    from app.engines.maintenance.service import MaintenanceEngine
+    from app.engines.pipeline.orchestrator import operation_registry
+    
+    # Check if maintenance is already running
+    operation_type = f"maintenance_{ats_type}" if ats_type else "maintenance_all"
+    if operation_registry.is_running(operation_type):
+        return {"error": f"{operation_type} already running", "running_operations": operation_registry.to_dict()}
+    
+    if sync:
+        # Run synchronously
+        if not await operation_registry.start_operation(operation_type):
+            return {"error": f"{operation_type} already running"}
+        
+        try:
+            engine = MaintenanceEngine(db)
+            results = await engine.run_maintenance(
+                ats_type=ats_type,
+                limit=limit,
+                include_custom=include_custom,
+            )
+            return {"status": "completed", **results}
+        finally:
+            await operation_registry.end_operation(operation_type)
+    
+    # Create a run record for tracking
+    from app.db import MaintenanceRun
+    run = MaintenanceRun(
+        run_type="ats_type" if ats_type else "full",
+        ats_type=ats_type,
+        status="running",
+        current_step="Starting maintenance...",
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+    run_id = run.id
+    
+    async def run_in_background():
+        from app.engines.maintenance.service import MaintenanceEngine
+        
+        if not await operation_registry.start_operation(operation_type):
+            return
+        
+        try:
+            async with async_session_factory() as session:
+                engine = MaintenanceEngine(session)
+                await engine.run_maintenance(
+                    ats_type=ats_type,
+                    limit=limit,
+                    run_id=run_id,
+                    include_custom=include_custom,
+                )
+        finally:
+            await operation_registry.end_operation(operation_type)
+    
+    background_tasks.add_task(run_in_background)
+    
+    msg = f"Maintenance started for up to {limit} companies"
+    if ats_type:
+        msg += f" (ATS: {ats_type})"
+    elif include_custom:
+        msg += " (including custom pages)"
+    
+    return {
+        "status": "started",
+        "message": msg,
+        "run_id": str(run_id),
+        "operation_type": operation_type,
+    }
+
+
+@router.post("/maintenance/runs/{run_id}/cancel")
+async def cancel_maintenance_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a running maintenance process."""
+    from app.db import MaintenanceRun
+    
+    result = await db.execute(
+        select(MaintenanceRun).where(MaintenanceRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    
+    if not run:
+        raise HTTPException(status_code=404, detail="Maintenance run not found")
+    
+    if run.status != "running":
+        raise HTTPException(status_code=400, detail=f"Cannot cancel run with status: {run.status}")
+    
+    # Mark as cancelled
+    run.status = "cancelled"
+    run.error_message = "Cancelled by user"
+    run.completed_at = func.now()
+    
+    await db.commit()
+    
+    return {"status": "cancelled", "run_id": str(run_id)}
+
+
+@router.get("/maintenance/delisted-jobs")
+async def get_delisted_jobs(
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(7, ge=1, le=90),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """Get recently delisted jobs."""
+    offset = (page - 1) * page_size
+    
+    result = await db.execute(text("""
+        SELECT 
+            j.id,
+            j.title,
+            j.source_url,
+            c.name as company_name,
+            c.ats_type,
+            j.delisted_at,
+            j.delist_reason,
+            j.created_at
+        FROM jobs j
+        JOIN companies c ON j.company_id = c.id
+        WHERE j.is_active = false
+          AND j.delisted_at IS NOT NULL
+          AND j.delisted_at > NOW() - INTERVAL ':days days'
+        ORDER BY j.delisted_at DESC
+        OFFSET :offset LIMIT :limit
+    """.replace(":days", str(days))), {"offset": offset, "limit": page_size})
+    
+    jobs = [
+        {
+            "id": str(row[0]),
+            "title": row[1],
+            "source_url": row[2],
+            "company_name": row[3],
+            "ats_type": row[4],
+            "delisted_at": row[5].isoformat() if row[5] else None,
+            "delist_reason": row[6],
+            "created_at": row[7].isoformat() if row[7] else None,
+        }
+        for row in result.fetchall()
+    ]
+    
+    # Get total count
+    count_result = await db.execute(text(f"""
+        SELECT COUNT(*) FROM jobs
+        WHERE is_active = false
+          AND delisted_at IS NOT NULL
+          AND delisted_at > NOW() - INTERVAL '{days} days'
+    """))
+    total = count_result.scalar() or 0
+    
+    return {
+        "jobs": jobs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }

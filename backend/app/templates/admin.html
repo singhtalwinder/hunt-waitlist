@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hunt Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'Zalando Sans Expanded';
+            src: url('/ZalandoSansExpanded-VariableFont_wght.ttf') format('truetype');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+        
+        .font-hunt {
+            font-family: 'Zalando Sans Expanded', 'Inter', sans-serif;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a1a1a1;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cta: '#FF4500',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-white text-black min-h-screen">
+    <div x-data="adminApp()" x-init="init()">
+        <!-- Header -->
+        <header class="w-full py-5 px-6 md:px-8 lg:px-12 border-b border-gray-200">
+            <div class="max-w-7xl mx-auto flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <!-- Logo -->
+                    <img src="/static/paper.png" alt="Hunt" width="32" height="32" />
+                    <span class="font-hunt text-2xl font-bold text-black">
+                        hunt<span class="text-cta">.</span>
+                    </span>
+                    <span class="ml-2 px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
+                        admin
+                    </span>
+                </div>
+                <div class="flex items-center gap-6">
+                    <span class="text-sm text-gray-500">
+                        <span class="font-semibold text-black" x-text="stats.total_companies"></span> companies · 
+                        <span class="font-semibold text-black" x-text="stats.total_jobs"></span> jobs
+                    </span>
+                    <button @click="refreshData()" 
+                            class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-black border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-6 md:px-8 lg:px-12 py-8">
+            <!-- Pipeline Control Center -->
+            <section class="mb-10 p-6 bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-xl text-white">
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h2 class="text-xl font-semibold">Pipeline Control Center</h2>
+                        <p class="text-sm text-gray-400">Automated discovery, crawling, enrichment, and embeddings</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full" 
+                                  :class="pipelineStatus.stage === 'idle' ? 'bg-gray-500' : 
+                                          pipelineStatus.stage === 'complete' ? 'bg-green-500' : 
+                                          pipelineStatus.stage === 'error' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'">
+                            </span>
+                            <span class="text-sm" x-text="pipelineStatus.stage?.toUpperCase() || 'IDLE'"></span>
+                        </div>
+                        <span class="text-sm text-gray-400" x-show="pipelineStatus.current_step" x-text="pipelineStatus.current_step"></span>
+                    </div>
+                </div>
+                
+                <!-- Pipeline Stats -->
+                <div class="grid grid-cols-4 gap-4 mb-6">
+                    <div class="p-4 bg-white/10 rounded-lg">
+                        <div class="text-2xl font-bold" x-text="pipelineStats.companies?.active || 0"></div>
+                        <div class="text-xs text-gray-400">Active Companies</div>
+                    </div>
+                    <div class="p-4 bg-white/10 rounded-lg">
+                        <div class="text-2xl font-bold" x-text="pipelineStats.jobs?.active || 0"></div>
+                        <div class="text-xs text-gray-400">Active Jobs</div>
+                    </div>
+                    <div class="p-4 bg-white/10 rounded-lg">
+                        <div class="text-2xl font-bold">
+                            <span x-text="pipelineStats.jobs?.with_description || 0"></span>
+                            <span class="text-sm text-gray-400" x-text="'(' + Math.round((pipelineStats.jobs?.with_description || 0) / (pipelineStats.jobs?.active || 1) * 100) + '%)'"></span>
+                        </div>
+                        <div class="text-xs text-gray-400">With Description</div>
+                    </div>
+                    <div class="p-4 bg-white/10 rounded-lg">
+                        <div class="text-2xl font-bold">
+                            <span x-text="pipelineStats.jobs?.with_embeddings || 0"></span>
+                            <span class="text-sm text-gray-400" x-text="'(' + Math.round((pipelineStats.jobs?.with_embeddings || 0) / (pipelineStats.jobs?.active || 1) * 100) + '%)'"></span>
+                        </div>
+                        <div class="text-xs text-gray-400">With Embeddings</div>
+                    </div>
+                </div>
+
+                <!-- Pipeline Actions -->
+                <div class="flex flex-wrap gap-3 mb-6">
+                    <button @click="runFullPipeline()" 
+                            :disabled="pipelineRunning"
+                            class="px-5 py-2.5 bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
+                        <span x-show="!pipelineRunning">▶ Run Full Pipeline</span>
+                        <span x-show="pipelineRunning">⟳ Running...</span>
+                    </button>
+                    <button @click="runDiscoverFromCompanies()" 
+                            :disabled="pipelineRunning"
+                            class="px-5 py-2.5 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded-lg font-medium transition-colors">
+                        🔍 Discover New Companies
+                    </button>
+                    <button @click="runPipelineCrawl()" 
+                            :disabled="pipelineRunning"
+                            class="px-5 py-2.5 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded-lg font-medium transition-colors">
+                        🕷 Crawl Jobs
+                    </button>
+                    <button @click="runPipelineEnrich()" 
+                            :disabled="pipelineRunning"
+                            class="px-5 py-2.5 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded-lg font-medium transition-colors">
+                        📝 Enrich Jobs
+                    </button>
+                    <button @click="runPipelineEmbeddings()" 
+                            :disabled="pipelineRunning"
+                            class="px-5 py-2.5 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded-lg font-medium transition-colors">
+                        🧠 Generate Embeddings
+                    </button>
+                </div>
+
+                <!-- Scheduler Controls -->
+                <div class="flex items-center justify-between p-4 bg-white/5 rounded-lg">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full" :class="schedulerStatus.running ? 'bg-green-500 animate-pulse' : 'bg-gray-500'"></span>
+                            <span class="font-medium">Scheduler</span>
+                        </div>
+                        <div class="text-xs text-gray-400 mt-1">
+                            <span x-show="schedulerStatus.running">
+                                Next run: <span x-text="schedulerStatus.next_run ? formatDate(schedulerStatus.next_run) : 'N/A'"></span>
+                            </span>
+                            <span x-show="!schedulerStatus.running">Not running</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="startScheduler()" 
+                                x-show="!schedulerStatus.running"
+                                class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors">
+                            Start (6h interval)
+                        </button>
+                        <button @click="stopScheduler()" 
+                                x-show="schedulerStatus.running"
+                                class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors">
+                            Stop Scheduler
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Discovery Section -->
+            <section class="mb-10 p-6 bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-100 rounded-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-black">Company Discovery</h2>
+                        <p class="text-sm text-gray-600">Automatically find new companies and their job pages</p>
+                    </div>
+                    <div class="flex items-center gap-4 text-sm">
+                        <div class="text-gray-600">
+                            Queue: <span class="font-semibold text-black" x-text="discoveryStats.queue?.pending || 0"></span> pending
+                        </div>
+                        <div class="text-gray-600" x-show="discoveryStats.queue?.review > 0">
+                            <span class="font-semibold text-orange-600" x-text="discoveryStats.queue?.review || 0"></span> need review
+                        </div>
+                        <div class="text-gray-600">
+                            Discovered: <span class="font-semibold text-black" x-text="discoveryStats.total_discovered_companies || 0"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-3 mb-4">
+                    <button @click="runDiscovery()" 
+                            :disabled="discovering"
+                            class="px-5 py-2.5 bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        <span x-show="!discovering">🔍 Run Discovery</span>
+                        <span x-show="discovering">Discovering...</span>
+                    </button>
+                    <button @click="runDiscoverySource('ats_directories')" 
+                            :disabled="discovering"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        ATS Directories
+                    </button>
+                    <button @click="runDiscoverySource('yc_directory')" 
+                            :disabled="discovering"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        YC Companies
+                    </button>
+                    <button @click="runDiscoverySource('github_orgs')" 
+                            :disabled="discovering"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        GitHub Orgs
+                    </button>
+                    <button @click="runDiscoverySource('funding_news')" 
+                            :disabled="discovering"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Funding News
+                    </button>
+                    <button @click="processDiscoveryQueue()" 
+                            :disabled="processingQueue"
+                            class="px-5 py-2.5 border border-gray-300 hover:border-gray-400 bg-white text-gray-700 hover:text-black rounded-lg font-medium transition-colors">
+                        <span x-show="!processingQueue">Process Queue</span>
+                        <span x-show="processingQueue">Processing...</span>
+                    </button>
+                </div>
+                <!-- Recent Discovery Runs -->
+                <div x-show="discoveryStats.recent_runs?.length > 0" class="mt-4 pt-4 border-t border-orange-200">
+                    <h3 class="text-sm font-medium text-gray-700 mb-2">Recent Runs</h3>
+                    <div class="flex flex-wrap gap-2">
+                        <template x-for="run in discoveryStats.recent_runs?.slice(0, 5)" :key="run.started_at">
+                            <div class="px-3 py-1.5 bg-white rounded-lg border border-gray-200 text-xs">
+                                <span class="font-medium" x-text="run.source"></span>:
+                                <span class="text-green-600" x-text="run.new_companies + ' new'"></span>
+                                <span class="text-gray-400">·</span>
+                                <span :class="run.status === 'completed' ? 'text-green-600' : 'text-yellow-600'" x-text="run.status"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ATS Discovery Section -->
+            <section class="mb-10 p-6 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-100 rounded-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-black">ATS Discovery</h2>
+                        <p class="text-sm text-gray-600">Detect which ATS platforms companies use by crawling their careers pages</p>
+                    </div>
+                    <div class="flex items-center gap-4 text-sm">
+                        <div class="text-gray-600">
+                            With ATS: <span class="font-semibold text-green-600" x-text="atsStats.total_with_ats || 0"></span>
+                        </div>
+                        <div class="text-gray-600">
+                            Needs Discovery: <span class="font-semibold text-orange-600" x-text="atsStats.needs_discovery || 0"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- ATS Distribution -->
+                <div class="mb-4 flex flex-wrap gap-2">
+                    <template x-for="ats in atsStats.by_ats_type?.slice(0, 10)" :key="ats.ats_type">
+                        <span class="px-3 py-1.5 bg-white rounded-lg border border-purple-200 text-xs">
+                            <span class="font-medium" x-text="ats.ats_type"></span>:
+                            <span class="text-purple-600 font-semibold" x-text="ats.count"></span>
+                        </span>
+                    </template>
+                </div>
+                
+                <!-- ATS Actions -->
+                <div class="flex flex-wrap gap-3">
+                    <button @click="redetectAtsFromUrls()" 
+                            :disabled="atsDiscovering"
+                            class="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        <span x-show="!atsDiscovering">⚡ Quick Re-detect from URLs</span>
+                        <span x-show="atsDiscovering">Processing...</span>
+                    </button>
+                    <button @click="runAtsDiscovery(50)" 
+                            :disabled="atsDiscovering"
+                            class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        <span x-show="!atsDiscovering">🔍 Deep Discover (50 companies)</span>
+                        <span x-show="atsDiscovering">Discovering...</span>
+                    </button>
+                    <button @click="runAtsDiscovery(200)" 
+                            :disabled="atsDiscovering"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        <span x-show="!atsDiscovering">🔍 Deep Discover (200 companies)</span>
+                        <span x-show="atsDiscovering">Discovering...</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Quick Actions -->
+            <section class="mb-10">
+                <h2 class="text-lg font-semibold text-black mb-4">Quick Actions</h2>
+                <div class="flex flex-wrap gap-3">
+                    <button @click="crawlAll()" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        <span x-show="!crawling">Crawl All Companies</span>
+                        <span x-show="crawling">Crawling...</span>
+                    </button>
+                    <button @click="crawlByAts('greenhouse')" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Crawl Greenhouse
+                    </button>
+                    <button @click="crawlByAts('lever')" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Crawl Lever
+                    </button>
+                    <button @click="crawlByAts('ashby')" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Crawl Ashby
+                    </button>
+                    <button @click="crawlByAts('workable')" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Crawl Workable
+                    </button>
+                    <button @click="crawlByAts('bamboohr')" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Crawl BambooHR
+                    </button>
+                    <button @click="crawlByAts('jobvite')" 
+                            :disabled="crawling"
+                            class="px-5 py-2.5 bg-black hover:bg-gray-800 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">
+                        Crawl Jobvite
+                    </button>
+                    <button @click="seedCompanies()" 
+                            :disabled="seeding"
+                            class="px-5 py-2.5 border border-gray-200 hover:border-gray-300 text-gray-700 hover:text-black rounded-lg font-medium transition-colors">
+                        <span x-show="!seeding">Seed Companies</span>
+                        <span x-show="seeding">Seeding...</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Status Messages -->
+            <div x-show="message" x-transition 
+                 class="mb-6 p-4 rounded-lg border" 
+                 :class="messageType === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'">
+                <p x-text="message"></p>
+            </div>
+
+            <!-- Filters -->
+            <section class="mb-6 flex flex-wrap gap-4">
+                <input type="text" 
+                       x-model="search" 
+                       @input.debounce.300ms="filterCompanies()"
+                       placeholder="Search companies..." 
+                       class="px-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors">
+                <select x-model="atsFilter" @change="filterCompanies()"
+                        class="px-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors">
+                    <option value="">All ATS Types</option>
+                    <option value="none">⚠️ No ATS Detected</option>
+                    <option disabled>──────────</option>
+                    <option value="greenhouse">Greenhouse</option>
+                    <option value="lever">Lever</option>
+                    <option value="ashby">Ashby</option>
+                    <option value="workable">Workable</option>
+                    <option value="workday">Workday</option>
+                    <option value="bamboohr">BambooHR</option>
+                    <option value="jazzhr">JazzHR</option>
+                    <option value="recruitee">Recruitee</option>
+                    <option value="jobvite">Jobvite</option>
+                    <option value="icims">iCIMS</option>
+                    <option value="smartrecruiters">SmartRecruiters</option>
+                    <option value="bullhorn">Bullhorn</option>
+                    <option value="gem">Gem</option>
+                    <option value="freshteam">Freshteam</option>
+                    <option value="pinpoint">Pinpoint</option>
+                    <option value="zoho_recruit">Zoho Recruit</option>
+                    <option value="successfactors">SAP SuccessFactors</option>
+                </select>
+            </section>
+
+            <!-- Companies Table -->
+            <section class="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b border-gray-200 bg-gray-50">
+                            <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
+                            <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Domain</th>
+                            <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ATS</th>
+                            <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Priority</th>
+                            <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Crawled</th>
+                            <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <template x-for="company in filteredCompanies" :key="company.id">
+                            <tr class="hover:bg-gray-50 transition-colors">
+                                <td class="px-5 py-4">
+                                    <span x-text="company.name" class="font-medium text-black"></span>
+                                </td>
+                                <td class="px-5 py-4">
+                                    <a :href="'https://' + company.domain" target="_blank" 
+                                       class="text-gray-600 hover:text-cta transition-colors" x-text="company.domain"></a>
+                                </td>
+                                <td class="px-5 py-4">
+                                    <span class="px-2.5 py-1 text-xs font-medium rounded-full" 
+                                          :class="{
+                                              'bg-green-50 text-green-700': company.ats_type === 'greenhouse',
+                                              'bg-purple-50 text-purple-700': company.ats_type === 'lever',
+                                              'bg-orange-50 text-orange-700': company.ats_type === 'ashby',
+                                              'bg-blue-50 text-blue-700': company.ats_type === 'workable',
+                                              'bg-cyan-50 text-cyan-700': company.ats_type === 'workday',
+                                              'bg-teal-50 text-teal-700': company.ats_type === 'bamboohr',
+                                              'bg-indigo-50 text-indigo-700': company.ats_type === 'recruitee',
+                                              'bg-pink-50 text-pink-700': company.ats_type === 'jobvite',
+                                              'bg-rose-50 text-rose-700': company.ats_type === 'icims',
+                                              'bg-yellow-50 text-yellow-700': company.ats_type === 'smartrecruiters',
+                                              'bg-lime-50 text-lime-700': company.ats_type && !['greenhouse', 'lever', 'ashby', 'workable', 'workday', 'bamboohr', 'recruitee', 'jobvite', 'icims', 'smartrecruiters'].includes(company.ats_type),
+                                              'bg-gray-100 text-gray-600': !company.ats_type
+                                          }"
+                                          x-text="company.ats_type || 'unknown'">
+                                    </span>
+                                </td>
+                                <td class="px-5 py-4 text-gray-600" x-text="company.crawl_priority"></td>
+                                <td class="px-5 py-4 text-sm text-gray-500">
+                                    <span x-text="company.last_crawled_at ? formatDate(company.last_crawled_at) : 'Never'"></span>
+                                </td>
+                                <td class="px-5 py-4">
+                                    <button @click="crawlCompany(company)" 
+                                            :disabled="company.crawling"
+                                            class="px-3.5 py-1.5 text-sm font-medium bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg transition-colors">
+                                        <span x-show="!company.crawling">Crawl</span>
+                                        <span x-show="company.crawling">...</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Pagination -->
+            <div class="flex items-center justify-between mb-12">
+                <p class="text-sm text-gray-500">
+                    Showing <span class="font-medium text-black" x-text="filteredCompanies.length"></span> of 
+                    <span class="font-medium text-black" x-text="companies.length"></span> companies
+                </p>
+                <div class="flex gap-2">
+                    <button @click="prevPage()" :disabled="page === 1"
+                            class="px-4 py-2 text-sm font-medium border border-gray-200 hover:border-gray-300 disabled:opacity-50 rounded-lg transition-colors">
+                        Previous
+                    </button>
+                    <span class="px-4 py-2 text-sm text-gray-500">Page <span x-text="page"></span></span>
+                    <button @click="nextPage()" :disabled="!hasMore"
+                            class="px-4 py-2 text-sm font-medium border border-gray-200 hover:border-gray-300 disabled:opacity-50 rounded-lg transition-colors">
+                        Next
+                    </button>
+                </div>
+            </div>
+
+            <!-- Recent Jobs Section -->
+            <section>
+                <h2 class="text-lg font-semibold text-black mb-4">Recent Jobs</h2>
+                <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="border-b border-gray-200 bg-gray-50">
+                                <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Title</th>
+                                <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
+                                <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                                <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Seniority</th>
+                                <th class="px-5 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Location</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            <template x-for="job in recentJobs" :key="job.id">
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-5 py-4">
+                                        <a :href="job.source_url" target="_blank" 
+                                           class="font-medium text-black hover:text-cta transition-colors" 
+                                           x-text="job.title.substring(0, 45) + (job.title.length > 45 ? '...' : '')"></a>
+                                    </td>
+                                    <td class="px-5 py-4 text-gray-600" x-text="job.company?.name"></td>
+                                    <td class="px-5 py-4">
+                                        <span class="px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full" 
+                                              x-text="job.role_family?.replace('_', ' ')"></span>
+                                    </td>
+                                    <td class="px-5 py-4">
+                                        <span class="text-sm" 
+                                              :class="{
+                                                  'text-cta font-medium': job.seniority === 'senior' || job.seniority === 'director',
+                                                  'text-gray-600': job.seniority !== 'senior' && job.seniority !== 'director'
+                                              }"
+                                              x-text="job.seniority"></span>
+                                    </td>
+                                    <td class="px-5 py-4 text-sm text-gray-500" 
+                                        x-text="job.locations?.slice(0, 2).join(', ') || '-'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="w-full py-6 px-6 md:px-8 lg:px-12 border-t border-gray-200 mt-12">
+            <div class="max-w-7xl mx-auto flex justify-between items-center text-sm text-gray-500">
+                <p>© 2026 Hunt. All rights reserved.</p>
+                <p>Admin Dashboard v0.1</p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        function adminApp() {
+            return {
+                companies: [],
+                filteredCompanies: [],
+                recentJobs: [],
+                stats: { total_companies: 0, total_jobs: 0 },
+                discoveryStats: { queue: {}, by_source: {}, recent_runs: [], total_discovered_companies: 0 },
+                atsStats: { by_ats_type: [], total_with_ats: 0, total_without_ats: 0, needs_discovery: 0 },
+                pipelineStatus: { stage: 'idle', current_step: '', progress: {} },
+                pipelineStats: { companies: {}, jobs: {}, discovery_queue: {} },
+                schedulerStatus: { running: false, next_run: null },
+                pipelineRunning: false,
+                atsDiscovering: false,
+                search: '',
+                atsFilter: '',
+                page: 1,
+                pageSize: 50,
+                hasMore: false,
+                crawling: false,
+                seeding: false,
+                discovering: false,
+                processingQueue: false,
+                message: '',
+                messageType: 'success',
+
+                async init() {
+                    await this.refreshData();
+                    // Poll pipeline status every 5 seconds
+                    setInterval(() => this.loadPipelineStatus(), 5000);
+                },
+
+                async refreshData() {
+                    await Promise.all([
+                        this.loadCompanies(),
+                        this.loadRecentJobs(),
+                        this.loadDiscoveryStats(),
+                        this.loadAtsStats(),
+                        this.loadPipelineStatus()
+                    ]);
+                },
+
+                async loadPipelineStatus() {
+                    try {
+                        const res = await fetch('/api/admin/pipeline/status');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.pipelineStatus = data.pipeline || { stage: 'idle' };
+                            this.pipelineStats = data.stats || {};
+                            this.schedulerStatus = data.scheduler || { running: false };
+                            this.pipelineRunning = this.pipelineStatus.stage !== 'idle' && 
+                                                   this.pipelineStatus.stage !== 'complete' && 
+                                                   this.pipelineStatus.stage !== 'error';
+                            // Update overall stats
+                            if (data.stats?.companies?.total) {
+                                this.stats.total_companies = data.stats.companies.total;
+                            }
+                            if (data.stats?.jobs?.total) {
+                                this.stats.total_jobs = data.stats.jobs.total;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Failed to load pipeline status:', e);
+                    }
+                },
+
+                async runFullPipeline() {
+                    this.pipelineRunning = true;
+                    try {
+                        const res = await fetch('/api/admin/pipeline/run', { method: 'POST' });
+                        const data = await res.json();
+                        if (data.error) {
+                            this.showMessage(data.error, 'error');
+                        } else {
+                            this.showMessage('Pipeline started! Check status for progress.', 'success');
+                        }
+                    } catch (e) {
+                        this.showMessage(`Failed to start pipeline: ${e.message}`, 'error');
+                        this.pipelineRunning = false;
+                    }
+                },
+
+                async runDiscoverFromCompanies() {
+                    this.pipelineRunning = true;
+                    try {
+                        const res = await fetch('/api/admin/pipeline/discover-from-companies?limit=50', { method: 'POST' });
+                        const data = await res.json();
+                        if (data.error) {
+                            this.showMessage(data.error, 'error');
+                        } else {
+                            this.showMessage('Discovery started from existing companies.', 'success');
+                        }
+                    } catch (e) {
+                        this.showMessage(`Failed: ${e.message}`, 'error');
+                        this.pipelineRunning = false;
+                    }
+                },
+
+                async runPipelineCrawl() {
+                    this.pipelineRunning = true;
+                    try {
+                        const res = await fetch('/api/admin/pipeline/crawl?limit=100', { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(data.message || 'Crawl started', 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed: ${e.message}`, 'error');
+                        this.pipelineRunning = false;
+                    }
+                },
+
+                async runPipelineEnrich() {
+                    this.pipelineRunning = true;
+                    try {
+                        const res = await fetch('/api/admin/pipeline/enrich?limit=500', { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(data.message || 'Enrichment started', 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed: ${e.message}`, 'error');
+                        this.pipelineRunning = false;
+                    }
+                },
+
+                async runPipelineEmbeddings() {
+                    this.pipelineRunning = true;
+                    try {
+                        const res = await fetch('/api/admin/pipeline/embeddings?batch_size=100', { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(data.message || 'Embeddings generation started', 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed: ${e.message}`, 'error');
+                        this.pipelineRunning = false;
+                    }
+                },
+
+                async startScheduler() {
+                    try {
+                        const res = await fetch('/api/admin/scheduler/start?interval_hours=6', { method: 'POST' });
+                        const data = await res.json();
+                        this.schedulerStatus = data;
+                        this.showMessage('Scheduler started! Will run every 6 hours.', 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed to start scheduler: ${e.message}`, 'error');
+                    }
+                },
+
+                async stopScheduler() {
+                    try {
+                        const res = await fetch('/api/admin/scheduler/stop', { method: 'POST' });
+                        const data = await res.json();
+                        this.schedulerStatus = { running: false };
+                        this.showMessage('Scheduler stopped.', 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed to stop scheduler: ${e.message}`, 'error');
+                    }
+                },
+
+                async loadDiscoveryStats() {
+                    try {
+                        const res = await fetch('/api/admin/discovery/stats');
+                        if (res.ok) {
+                            this.discoveryStats = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to load discovery stats:', e);
+                    }
+                },
+
+                async loadAtsStats() {
+                    try {
+                        const res = await fetch('/api/admin/ats/stats');
+                        if (res.ok) {
+                            this.atsStats = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to load ATS stats:', e);
+                    }
+                },
+
+                async redetectAtsFromUrls() {
+                    this.atsDiscovering = true;
+                    try {
+                        const res = await fetch('/api/admin/ats/redetect', { method: 'POST' });
+                        if (!res.ok) {
+                            const text = await res.text();
+                            throw new Error(text || `HTTP ${res.status}`);
+                        }
+                        const data = await res.json();
+                        
+                        // Show summary
+                        const summary = Object.entries(data.by_ats_type || {})
+                            .map(([ats, count]) => `${ats}: ${count}`)
+                            .join(', ');
+                        this.showMessage(`Updated ${data.updated_count} companies. ${summary}`, 'success');
+                        
+                        await Promise.all([this.loadAtsStats(), this.loadCompanies()]);
+                    } catch (e) {
+                        this.showMessage(`Failed to re-detect ATS: ${e.message}`, 'error');
+                    } finally {
+                        this.atsDiscovering = false;
+                    }
+                },
+
+                async runAtsDiscovery(limit = 100) {
+                    this.atsDiscovering = true;
+                    try {
+                        const res = await fetch(`/api/admin/ats/discover?limit=${limit}&sync=true`, { method: 'POST' });
+                        if (!res.ok) {
+                            const text = await res.text();
+                            throw new Error(text || `HTTP ${res.status}`);
+                        }
+                        const data = await res.json();
+                        
+                        this.showMessage(`ATS Discovery complete: ${data.discovered || 0} discovered, ${data.failed || 0} failed`, 'success');
+                        
+                        await Promise.all([this.loadAtsStats(), this.loadCompanies()]);
+                    } catch (e) {
+                        this.showMessage(`Failed to run ATS discovery: ${e.message}`, 'error');
+                    } finally {
+                        this.atsDiscovering = false;
+                    }
+                },
+
+                async runDiscovery(sourceNames = null) {
+                    this.discovering = true;
+                    try {
+                        let url = '/api/admin/discovery/run?sync=true';
+                        if (sourceNames) {
+                            url += `&source_names=${sourceNames}`;
+                        }
+                        const res = await fetch(url, { method: 'POST' });
+                        if (!res.ok) {
+                            const text = await res.text();
+                            throw new Error(text || `HTTP ${res.status}`);
+                        }
+                        const data = await res.json();
+                        
+                        // Show results summary
+                        if (data.results) {
+                            const total = data.results.reduce((sum, r) => sum + (r.new_companies || 0), 0);
+                            this.showMessage(`Discovery complete: ${total} new companies found`, 'success');
+                        } else {
+                            this.showMessage(data.message || 'Discovery started', 'success');
+                        }
+                        
+                        await this.loadDiscoveryStats();
+                    } catch (e) {
+                        this.showMessage(`Failed to start discovery: ${e.message}`, 'error');
+                    } finally {
+                        this.discovering = false;
+                    }
+                },
+
+                async runDiscoverySource(sourceName) {
+                    await this.runDiscovery(sourceName);
+                },
+
+                async processDiscoveryQueue() {
+                    this.processingQueue = true;
+                    try {
+                        const res = await fetch('/api/admin/discovery/process-queue?limit=100', { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(`Processed ${data.processed} items: ${data.created} created, ${data.failed} failed`, 'success');
+                        await Promise.all([this.loadCompanies(), this.loadDiscoveryStats()]);
+                    } catch (e) {
+                        this.showMessage(`Failed to process queue: ${e.message}`, 'error');
+                    } finally {
+                        this.processingQueue = false;
+                    }
+                },
+
+                async loadCompanies() {
+                    try {
+                        const res = await fetch(`/api/admin/companies?page=${this.page}&page_size=${this.pageSize}`);
+                        const data = await res.json();
+                        this.companies = data.companies.map(c => ({ ...c, crawling: false }));
+                        this.filteredCompanies = this.companies;
+                        this.hasMore = data.companies.length === this.pageSize;
+                        this.stats.total_companies = data.total;
+                    } catch (e) {
+                        console.error('Failed to load companies:', e);
+                    }
+                },
+
+                async loadRecentJobs() {
+                    try {
+                        const res = await fetch('/api/jobs?page_size=10');
+                        const data = await res.json();
+                        this.recentJobs = data.jobs;
+                        this.stats.total_jobs = data.total;
+                    } catch (e) {
+                        console.error('Failed to load jobs:', e);
+                    }
+                },
+
+                filterCompanies() {
+                    this.filteredCompanies = this.companies.filter(c => {
+                        const matchesSearch = !this.search || 
+                            c.name.toLowerCase().includes(this.search.toLowerCase()) ||
+                            (c.domain && c.domain.toLowerCase().includes(this.search.toLowerCase()));
+                        let matchesAts = true;
+                        if (this.atsFilter === 'none') {
+                            matchesAts = !c.ats_type;
+                        } else if (this.atsFilter) {
+                            matchesAts = c.ats_type === this.atsFilter;
+                        }
+                        return matchesSearch && matchesAts;
+                    });
+                },
+
+                async crawlCompany(company) {
+                    company.crawling = true;
+                    try {
+                        const res = await fetch(`/api/internal/crawl/trigger?company_id=${company.id}`, { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(`Crawl triggered for ${company.name}`, 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed to crawl ${company.name}: ${e.message}`, 'error');
+                    } finally {
+                        company.crawling = false;
+                    }
+                },
+
+                async crawlAll() {
+                    this.crawling = true;
+                    try {
+                        const res = await fetch('/api/internal/crawl/trigger', { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(data.message || 'Crawl triggered for all companies', 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed to start crawl: ${e.message}`, 'error');
+                    } finally {
+                        this.crawling = false;
+                    }
+                },
+
+                async crawlByAts(atsType) {
+                    this.crawling = true;
+                    try {
+                        const res = await fetch(`/api/internal/crawl/trigger?ats_type=${atsType}`, { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(data.message || `Crawl triggered for ${atsType} companies`, 'success');
+                    } catch (e) {
+                        this.showMessage(`Failed to start crawl: ${e.message}`, 'error');
+                    } finally {
+                        this.crawling = false;
+                    }
+                },
+
+                async seedCompanies() {
+                    this.seeding = true;
+                    try {
+                        const res = await fetch('/api/admin/companies/seed', { method: 'POST' });
+                        const data = await res.json();
+                        this.showMessage(data.message || 'Companies seeded successfully', 'success');
+                        await this.loadCompanies();
+                    } catch (e) {
+                        this.showMessage(`Failed to seed companies: ${e.message}`, 'error');
+                    } finally {
+                        this.seeding = false;
+                    }
+                },
+
+                showMessage(msg, type) {
+                    this.message = msg;
+                    this.messageType = type;
+                    setTimeout(() => { this.message = ''; }, 5000);
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return 'Never';
+                    const date = new Date(dateStr);
+                    const now = new Date();
+                    const diff = now - date;
+                    const mins = Math.floor(diff / 60000);
+                    const hours = Math.floor(diff / 3600000);
+                    const days = Math.floor(diff / 86400000);
+                    
+                    if (mins < 60) return `${mins}m ago`;
+                    if (hours < 24) return `${hours}h ago`;
+                    return `${days}d ago`;
+                },
+
+                prevPage() {
+                    if (this.page > 1) {
+                        this.page--;
+                        this.loadCompanies();
+                    }
+                },
+
+                nextPage() {
+                    if (this.hasMore) {
+                        this.page++;
+                        this.loadCompanies();
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>

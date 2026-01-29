@@ -1,0 +1,386 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="analyticsApp()" x-init="init()">
+    <!-- Message Container -->
+    <div id="message-container" class="mb-4 lg:mb-6"></div>
+    
+    <!-- Time Range Selector -->
+    <div class="mb-6 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <label class="text-sm font-medium text-gray-600">Time Range:</label>
+            <select x-model="days" @change="loadData()" 
+                    class="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-cta focus:border-transparent">
+                <option value="7">Last 7 days</option>
+                <option value="14">Last 14 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="60">Last 60 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+        </div>
+        <button @click="loadData()" 
+                :disabled="loading"
+                class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors disabled:opacity-50">
+            <svg :class="loading && 'animate-spin'" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Refresh
+        </button>
+    </div>
+    
+    <!-- Main Stats -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:gap-6 mb-6 lg:mb-8">
+        <div class="bg-white rounded-xl border border-gray-200 p-6 lg:p-8">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Total Companies</p>
+                    <p class="text-4xl lg:text-5xl font-bold text-black mt-2" x-text="analytics.totals?.total_companies?.toLocaleString() || 0"></p>
+                    <p class="text-sm text-green-600 mt-2">
+                        +<span x-text="analytics.totals?.companies_added_period || 0"></span> in last <span x-text="days"></span> days
+                    </p>
+                </div>
+                <div class="w-14 h-14 bg-orange-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <svg class="w-7 h-7 text-cta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white rounded-xl border border-gray-200 p-6 lg:p-8">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Total Jobs</p>
+                    <p class="text-4xl lg:text-5xl font-bold text-black mt-2" x-text="analytics.totals?.total_jobs?.toLocaleString() || 0"></p>
+                    <p class="text-sm text-green-600 mt-2">
+                        +<span x-text="analytics.totals?.jobs_added_period || 0"></span> in last <span x-text="days"></span> days
+                    </p>
+                </div>
+                <div class="w-14 h-14 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Charts Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <!-- Crawls Over Time -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-black">Crawls Over Time</h3>
+                <p class="text-sm text-gray-500">Daily crawl activity</p>
+            </div>
+            <div class="h-64 lg:h-72">
+                <canvas id="crawlsChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- New Companies -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-black">New Companies</h3>
+                <p class="text-sm text-gray-500">Companies added per day</p>
+            </div>
+            <div class="h-64 lg:h-72">
+                <canvas id="companiesChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- New Jobs -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-black">New Jobs</h3>
+                <p class="text-sm text-gray-500">Jobs extracted from crawls</p>
+            </div>
+            <div class="h-64 lg:h-72">
+                <canvas id="jobsChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Jobs Delisted -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-black">Jobs Delisted</h3>
+                <p class="text-sm text-gray-500">Jobs marked as inactive/filled</p>
+            </div>
+            <div class="h-64 lg:h-72">
+                <canvas id="delistedChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Companies by Source -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-black">Companies by Source</h3>
+                <p class="text-sm text-gray-500">Discovery source distribution</p>
+            </div>
+            <div class="h-64 lg:h-72">
+                <canvas id="sourcesChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Job Growth Analysis -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-black">Job Growth Analysis</h3>
+                <p class="text-sm text-gray-500">New jobs vs existing companies adding jobs</p>
+            </div>
+            <div class="h-64 lg:h-72">
+                <canvas id="growthChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sources Table -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden" x-show="analytics.sources?.length > 0">
+        <div class="px-4 lg:px-6 py-3 lg:py-4 border-b border-gray-200">
+            <h3 class="text-lg font-semibold text-black">Discovery Sources</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100 bg-gray-50">
+                        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Source</th>
+                        <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Companies</th>
+                        <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Share</th>
+                        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Distribution</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <template x-for="(source, index) in analytics.sources" :key="source.name">
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-6 py-4">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: getColor(index) }"></div>
+                                    <span class="font-medium text-black" x-text="source.name"></span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 text-right text-gray-600" x-text="source.value.toLocaleString()"></td>
+                            <td class="px-6 py-4 text-right text-gray-600" x-text="getPercentage(source.value) + '%'"></td>
+                            <td class="px-6 py-4">
+                                <div class="w-full bg-gray-100 rounded-full h-2">
+                                    <div class="h-2 rounded-full transition-all"
+                                         :style="{ width: getPercentage(source.value) + '%', backgroundColor: getColor(index) }">
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const COLORS = ['#FF4500', '#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
+
+function analyticsApp() {
+    return {
+        analytics: {},
+        days: 30,
+        loading: false,
+        charts: {},
+        
+        async init() {
+            await this.$nextTick();
+            await this.loadData();
+        },
+        
+        async loadData() {
+            this.loading = true;
+            try {
+                const res = await fetch(`/api/admin/analytics?days=${this.days}`);
+                if (res.ok) {
+                    this.analytics = await res.json();
+                    await this.$nextTick();
+                    setTimeout(() => this.renderCharts(), 100);
+                } else {
+                    showMessage('Failed to load analytics data', 'error');
+                }
+            } catch (e) {
+                console.error('Failed to load analytics:', e);
+                showMessage('Failed to load analytics: ' + e.message, 'error');
+            } finally {
+                this.loading = false;
+            }
+        },
+        
+        getColor(index) {
+            return COLORS[index % COLORS.length];
+        },
+        
+        getPercentage(value) {
+            const total = this.analytics.sources?.reduce((sum, s) => sum + s.value, 0) || 1;
+            return ((value / total) * 100).toFixed(1);
+        },
+        
+        renderCharts() {
+            Object.values(this.charts).forEach(chart => chart.destroy());
+            this.charts = {};
+            
+            const formatDate = (dateStr) => {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            };
+            
+            const commonOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                    y: { beginAtZero: true, grid: { color: '#f3f4f6' }, ticks: { font: { size: 11 } } }
+                }
+            };
+            
+            // Crawls Chart
+            const crawlsCanvas = document.getElementById('crawlsChart');
+            if (this.analytics.crawls_per_day?.length && crawlsCanvas) {
+                this.charts.crawls = new Chart(crawlsCanvas, {
+                    type: 'line',
+                    data: {
+                        labels: this.analytics.crawls_per_day.map(d => formatDate(d.date)),
+                        datasets: [{
+                            data: this.analytics.crawls_per_day.map(d => d.value),
+                            borderColor: '#10B981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        }]
+                    },
+                    options: commonOptions
+                });
+            }
+            
+            // Companies Chart
+            const companiesCanvas = document.getElementById('companiesChart');
+            if (this.analytics.new_companies_per_day?.length && companiesCanvas) {
+                this.charts.companies = new Chart(companiesCanvas, {
+                    type: 'bar',
+                    data: {
+                        labels: this.analytics.new_companies_per_day.map(d => formatDate(d.date)),
+                        datasets: [{
+                            data: this.analytics.new_companies_per_day.map(d => d.value),
+                            backgroundColor: '#FF4500',
+                            borderRadius: 4
+                        }]
+                    },
+                    options: commonOptions
+                });
+            }
+            
+            // Jobs Chart
+            const jobsCanvas = document.getElementById('jobsChart');
+            if (this.analytics.new_jobs_per_day?.length && jobsCanvas) {
+                this.charts.jobs = new Chart(jobsCanvas, {
+                    type: 'line',
+                    data: {
+                        labels: this.analytics.new_jobs_per_day.map(d => formatDate(d.date)),
+                        datasets: [{
+                            data: this.analytics.new_jobs_per_day.map(d => d.value),
+                            borderColor: '#3B82F6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        }]
+                    },
+                    options: commonOptions
+                });
+            }
+            
+            // Delisted Chart
+            const delistedCanvas = document.getElementById('delistedChart');
+            if (this.analytics.delisted_jobs_per_day?.length && delistedCanvas) {
+                this.charts.delisted = new Chart(delistedCanvas, {
+                    type: 'line',
+                    data: {
+                        labels: this.analytics.delisted_jobs_per_day.map(d => formatDate(d.date)),
+                        datasets: [{
+                            data: this.analytics.delisted_jobs_per_day.map(d => d.value),
+                            borderColor: '#EF4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        }]
+                    },
+                    options: commonOptions
+                });
+            }
+            
+            // Sources Pie Chart
+            const sourcesCanvas = document.getElementById('sourcesChart');
+            if (this.analytics.sources?.length && sourcesCanvas) {
+                this.charts.sources = new Chart(sourcesCanvas, {
+                    type: 'doughnut',
+                    data: {
+                        labels: this.analytics.sources.map(s => s.name),
+                        datasets: [{
+                            data: this.analytics.sources.map(s => s.value),
+                            backgroundColor: COLORS.slice(0, this.analytics.sources.length)
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                labels: { font: { size: 11 } }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Growth Analysis Chart
+            const growthCanvas = document.getElementById('growthChart');
+            if (this.analytics.new_jobs_per_day?.length && growthCanvas) {
+                this.charts.growth = new Chart(growthCanvas, {
+                    type: 'line',
+                    data: {
+                        labels: this.analytics.new_jobs_per_day.map(d => formatDate(d.date)),
+                        datasets: [{
+                            label: 'Total New Jobs',
+                            data: this.analytics.new_jobs_per_day.map(d => d.value),
+                            borderColor: '#3B82F6',
+                            backgroundColor: 'transparent',
+                            tension: 0.3
+                        }, {
+                            label: 'Existing Companies Adding Jobs',
+                            data: this.analytics.companies_with_new_jobs_per_day?.map(d => d.value) || [],
+                            borderColor: '#8B5CF6',
+                            backgroundColor: 'transparent',
+                            tension: 0.3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: { font: { size: 12 } }
+                            }
+                        },
+                        scales: {
+                            x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                            y: { beginAtZero: true, grid: { color: '#f3f4f6' }, ticks: { font: { size: 11 } } }
+                        }
+                    }
+                });
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

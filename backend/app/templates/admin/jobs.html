@@ -1,0 +1,257 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Jobs{% endblock %}
+{% block header %}Jobs{% endblock %}
+
+{% block content %}
+<div x-data="jobsApp()" x-init="init()">
+    <!-- Message Container -->
+    <div id="message-container" class="mb-4 lg:mb-6"></div>
+    
+    <!-- Stats -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 mb-6 lg:mb-8">
+        <div class="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 lg:p-6">
+            <p class="text-[10px] sm:text-xs lg:text-sm font-medium text-gray-500">Total Jobs</p>
+            <p class="text-xl sm:text-2xl lg:text-3xl font-bold text-black mt-0.5 sm:mt-1" x-text="stats.total_jobs || 0"></p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 lg:p-6">
+            <p class="text-[10px] sm:text-xs lg:text-sm font-medium text-gray-500">Active Jobs</p>
+            <p class="text-xl sm:text-2xl lg:text-3xl font-bold text-black mt-0.5 sm:mt-1" x-text="stats.active_jobs || 0"></p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 lg:p-6">
+            <p class="text-[10px] sm:text-xs lg:text-sm font-medium text-gray-500">Last 24h</p>
+            <p class="text-xl sm:text-2xl lg:text-3xl font-bold text-green-600 mt-0.5 sm:mt-1" x-text="stats.jobs_last_24h || 0"></p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 lg:p-6">
+            <p class="text-[10px] sm:text-xs lg:text-sm font-medium text-gray-500">Last 7d</p>
+            <p class="text-xl sm:text-2xl lg:text-3xl font-bold text-black mt-0.5 sm:mt-1" x-text="stats.jobs_last_7d || 0"></p>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="bg-white rounded-xl border border-gray-200 p-3 lg:p-4 mb-4 lg:mb-6">
+        <div class="flex flex-col gap-3">
+            <input type="text" 
+                   x-model="search" 
+                   @input.debounce.300ms="loadJobs()"
+                   placeholder="Search jobs..." 
+                   class="w-full px-3 lg:px-4 py-2 lg:py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors text-sm">
+            <div class="flex gap-2 lg:gap-3">
+                <select x-model="roleFilter" @change="loadJobs()"
+                        class="flex-1 px-3 lg:px-4 py-2 lg:py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors text-sm">
+                    <option value="">All Roles</option>
+                    <option value="software_engineer">Software Engineer</option>
+                    <option value="product_manager">Product Manager</option>
+                    <option value="designer">Designer</option>
+                    <option value="data_scientist">Data Scientist</option>
+                    <option value="devops">DevOps</option>
+                </select>
+                <select x-model="seniorityFilter" @change="loadJobs()"
+                        class="flex-1 px-3 lg:px-4 py-2 lg:py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors text-sm">
+                    <option value="">All Levels</option>
+                    <option value="intern">Intern</option>
+                    <option value="junior">Junior</option>
+                    <option value="mid">Mid</option>
+                    <option value="senior">Senior</option>
+                    <option value="staff">Staff</option>
+                    <option value="director">Director</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Jobs Table -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <!-- Desktop Table -->
+        <div class="hidden lg:block table-responsive">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-200 bg-gray-50">
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Title</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Seniority</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Location</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <template x-for="job in jobs" :key="job.id">
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-6 py-4">
+                                <a :href="job.source_url" target="_blank" 
+                                   class="font-medium text-black hover:text-cta transition-colors" 
+                                   x-text="job.title.substring(0, 50) + (job.title.length > 50 ? '...' : '')"></a>
+                            </td>
+                            <td class="px-6 py-4 text-gray-600" x-text="job.company?.name"></td>
+                            <td class="px-6 py-4">
+                                <span class="px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full" 
+                                      x-text="job.role_family?.replace('_', ' ') || '-'"></span>
+                            </td>
+                            <td class="px-6 py-4">
+                                <span class="text-sm" 
+                                      :class="{
+                                          'text-cta font-medium': job.seniority === 'senior' || job.seniority === 'staff' || job.seniority === 'director',
+                                          'text-gray-600': !['senior', 'staff', 'director'].includes(job.seniority)
+                                      }"
+                                      x-text="job.seniority || '-'"></span>
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-500" 
+                                x-text="job.locations?.slice(0, 2).join(', ') || '-'"></td>
+                            <td class="px-6 py-4">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full" :class="job.description ? 'bg-green-500' : 'bg-gray-300'" title="Description"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="job.embedding ? 'bg-purple-500' : 'bg-gray-300'" title="Embedding"></span>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="jobs.length === 0">
+                        <td colspan="6" class="px-6 py-8 text-center text-gray-500">No jobs found</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Mobile Cards -->
+        <div class="lg:hidden divide-y divide-gray-100">
+            <template x-for="job in jobs" :key="job.id">
+                <div class="p-4">
+                    <a :href="job.source_url" target="_blank" 
+                       class="font-medium text-black hover:text-cta transition-colors text-sm block mb-1 leading-snug" 
+                       x-text="job.title.substring(0, 70) + (job.title.length > 70 ? '...' : '')"></a>
+                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                        <span x-text="job.company?.name"></span>
+                        <span x-show="job.locations?.length">·</span>
+                        <span x-text="job.locations?.slice(0, 1).join('') || ''"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full" 
+                              x-text="job.role_family?.replace('_', ' ') || '-'"></span>
+                        <span class="text-xs" 
+                              :class="{
+                                  'text-cta font-medium': job.seniority === 'senior' || job.seniority === 'staff' || job.seniority === 'director',
+                                  'text-gray-500': !['senior', 'staff', 'director'].includes(job.seniority)
+                              }"
+                              x-text="job.seniority || '-'"></span>
+                        <div class="flex items-center gap-1 ml-auto">
+                            <span class="w-2 h-2 rounded-full" :class="job.description ? 'bg-green-500' : 'bg-gray-300'"></span>
+                            <span class="w-2 h-2 rounded-full" :class="job.embedding ? 'bg-purple-500' : 'bg-gray-300'"></span>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <div x-show="jobs.length === 0" class="p-8 text-center text-gray-500">
+                No jobs found
+            </div>
+        </div>
+        
+        <!-- Pagination -->
+        <div class="px-4 lg:px-6 py-3 lg:py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p class="text-xs lg:text-sm text-gray-500">
+                <span class="font-medium text-black" x-text="jobs.length"></span> of 
+                <span class="font-medium text-black" x-text="total"></span> jobs
+            </p>
+            <div class="flex items-center gap-2">
+                <button @click="prevPage()" :disabled="page === 1"
+                        class="px-3 lg:px-4 py-2 text-sm font-medium border border-gray-200 hover:border-gray-300 disabled:opacity-50 rounded-lg transition-colors">
+                    Prev
+                </button>
+                <span class="px-3 lg:px-4 py-2 text-sm text-gray-500">Page <span x-text="page"></span></span>
+                <button @click="nextPage()" :disabled="!hasMore"
+                        class="px-3 lg:px-4 py-2 text-sm font-medium border border-gray-200 hover:border-gray-300 disabled:opacity-50 rounded-lg transition-colors">
+                    Next
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Legend -->
+    <div class="mt-4 flex flex-wrap items-center gap-4 lg:gap-6 text-xs lg:text-sm text-gray-500">
+        <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-green-500"></span>
+            <span>Has Description</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+            <span>Has Embedding</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-gray-300"></span>
+            <span>Missing</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function jobsApp() {
+    return {
+        jobs: [],
+        total: 0,
+        stats: {},
+        search: '',
+        roleFilter: '',
+        seniorityFilter: '',
+        page: 1,
+        pageSize: 50,
+        hasMore: false,
+
+        async init() {
+            await Promise.all([
+                this.loadStats(),
+                this.loadJobs()
+            ]);
+        },
+
+        async loadStats() {
+            try {
+                const res = await fetch('/api/admin/metrics');
+                if (res.ok) {
+                    this.stats = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        },
+
+        async loadJobs() {
+            try {
+                let url = `/api/jobs?page=${this.page}&page_size=${this.pageSize}`;
+                if (this.search) {
+                    url += `&search=${encodeURIComponent(this.search)}`;
+                }
+                if (this.roleFilter) {
+                    url += `&role_family=${this.roleFilter}`;
+                }
+                if (this.seniorityFilter) {
+                    url += `&seniority=${this.seniorityFilter}`;
+                }
+                const res = await fetch(url);
+                const data = await res.json();
+                this.jobs = data.jobs;
+                this.total = data.total;
+                this.hasMore = data.jobs.length === this.pageSize;
+            } catch (e) {
+                console.error('Failed to load jobs:', e);
+            }
+        },
+
+        prevPage() {
+            if (this.page > 1) {
+                this.page--;
+                this.loadJobs();
+            }
+        },
+
+        nextPage() {
+            if (this.hasMore) {
+                this.page++;
+                this.loadJobs();
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

@@ -20,9 +20,65 @@ import {
   Activity
 } from 'lucide-react'
 import { Logo } from '@/components/Logo'
-import { api, PipelineStatusResponse, RunningPipelineRun } from '@/lib/api'
+import { api, PipelineStatusResponse, RunningPipelineRun, OperationStatus } from '@/lib/api'
 
 type StageType = 'discovery' | 'crawl' | 'enrich' | 'embeddings'
+
+// Helper to check if an operation is running for a given stage
+function isStageRunning(
+  stageId: StageType,
+  runningOps: Record<string, OperationStatus>,
+  runningRuns: RunningPipelineRun[]
+): boolean {
+  // Check registry operations (e.g., "discovery", "crawl_greenhouse", "crawl_all", "embeddings")
+  for (const opType of Object.keys(runningOps)) {
+    if (opType === stageId) return true
+    if (opType.startsWith(`${stageId}_`)) return true
+    if (opType === 'full_pipeline') return true
+  }
+  
+  // Check database pipeline runs
+  for (const run of runningRuns) {
+    if (run.status !== 'running') continue
+    if (run.stage === stageId) return true
+    if (run.stage.startsWith(`${stageId}_`)) return true
+    if (run.stage === 'detect_ats' && stageId === 'discovery') return true
+    if (run.stage === 'custom_crawl' && stageId === 'crawl') return true
+  }
+  
+  return false
+}
+
+// Get all running operations for a stage
+function getStageOperations(
+  stageId: StageType,
+  runningOps: Record<string, OperationStatus>,
+  runningRuns: RunningPipelineRun[]
+): { ops: OperationStatus[], runs: RunningPipelineRun[] } {
+  const ops: OperationStatus[] = []
+  const runs: RunningPipelineRun[] = []
+  
+  // Check registry operations
+  for (const [opType, op] of Object.entries(runningOps)) {
+    if (opType === stageId || opType.startsWith(`${stageId}_`)) {
+      ops.push(op)
+    }
+  }
+  
+  // Check database pipeline runs
+  for (const run of runningRuns) {
+    if (run.status !== 'running') continue
+    if (run.stage === stageId || run.stage.startsWith(`${stageId}_`)) {
+      runs.push(run)
+    } else if (run.stage === 'detect_ats' && stageId === 'discovery') {
+      runs.push(run)
+    } else if (run.stage === 'custom_crawl' && stageId === 'crawl') {
+      runs.push(run)
+    }
+  }
+  
+  return { ops, runs }
+}
 
 interface StageConfig {
   id: StageType
@@ -85,28 +141,29 @@ function formatNumber(num: number): string {
 function StageCard({ 
   stage, 
   status, 
-  isActive, 
   isExpanded,
   onToggle,
   onRun,
   isRunning,
-  runningRun,
 }: { 
   stage: StageConfig
   status: PipelineStatusResponse | null
-  isActive: boolean
   isExpanded: boolean
   onToggle: () => void
   onRun: () => void
   isRunning: boolean
-  runningRun?: RunningPipelineRun
 }) {
   const Icon = stage.icon
-  const pipelineStage = status?.pipeline?.stage
-  // Check if this stage is running via pipeline orchestrator OR via a database pipeline run
-  const isCurrentStage = pipelineStage === stage.id || 
-    (runningRun?.stage === stage.id && runningRun?.status === 'running') ||
-    (runningRun?.stage === 'detect_ats' && stage.id === 'discovery')  // ATS detection is part of discovery
+  
+  // Get running operations for this stage (supports concurrent operations)
+  const runningOps = status?.running_operations?.running_operations || {}
+  const runningRuns = status?.running_runs || []
+  const isCurrentStage = isStageRunning(stage.id, runningOps, runningRuns)
+  const { ops: stageOps, runs: stageRuns } = getStageOperations(stage.id, runningOps, runningRuns)
+  
+  // Count concurrent operations for this stage
+  const concurrentCount = stageOps.length + stageRuns.length
+  
   const progress = status?.pipeline?.progress?.[stage.id] as Record<string, unknown> | undefined
   
   // Get stats for this stage
@@ -182,7 +239,7 @@ function StageCard({
                 {isCurrentStage && (
                   <span className="flex items-center gap-1 text-xs font-medium text-[#FF4500] bg-orange-50 px-2 py-0.5 rounded-full">
                     <Activity className="w-3 h-3 animate-pulse" />
-                    Running
+                    Running{concurrentCount > 1 ? ` (${concurrentCount})` : ''}
                   </span>
                 )}
               </div>
@@ -203,14 +260,14 @@ function StageCard({
                 e.stopPropagation()
                 onRun()
               }}
-              disabled={isRunning || isActive}
+              disabled={isRunning || isCurrentStage}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                isRunning || isActive
+                isRunning || isCurrentStage
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-[#FF4500] hover:bg-[#E63E00] text-white'
               }`}
             >
-              {isRunning ? (
+              {isRunning || isCurrentStage ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Play className="w-4 h-4" />
@@ -248,68 +305,114 @@ function StageCard({
       {/* Expanded content */}
       {isExpanded && (
         <div className="border-t border-gray-100 p-4 bg-gray-50/50">
-          {/* Current progress if running - check both orchestrator and database run */}
-          {isCurrentStage && (status?.pipeline?.current_step || runningRun?.current_step) && (
-            <div className="mb-4 p-3 bg-orange-50 border border-orange-100 rounded-lg">
-              <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {runningRun?.current_step || status?.pipeline?.current_step}
-              </div>
-              {(runningRun?.started_at || status?.pipeline?.started_at) && (
-                <div className="text-xs text-orange-600 mt-1">
-                  Running for {formatDuration(runningRun?.started_at || status?.pipeline?.started_at || '')}
-                </div>
-              )}
-              
-              {/* Stage-specific progress from running run (database) */}
-              {runningRun && runningRun.status === 'running' && (
-                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-white rounded-lg p-2 border border-orange-100">
-                    <div className="text-lg font-bold text-green-600">
-                      {formatNumber(runningRun.processed)}
+          {/* Current progress if running - show ALL concurrent operations */}
+          {isCurrentStage && (stageOps.length > 0 || stageRuns.length > 0) && (
+            <div className="mb-4 space-y-3">
+              {/* Show registry operations (from OperationRegistry) */}
+              {stageOps.map((op, i) => (
+                <div key={`op-${i}`} className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="font-semibold">{op.operation_type}</span>
+                      {op.current_step && <span className="text-orange-600">- {op.current_step}</span>}
                     </div>
-                    <div className="text-xs text-gray-500">Detected</div>
-                  </div>
-                  <div className="bg-white rounded-lg p-2 border border-orange-100">
-                    <div className="text-lg font-bold text-gray-600">
-                      {formatNumber(runningRun.failed)}
-                    </div>
-                    <div className="text-xs text-gray-500">Not Detected</div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Stage-specific progress from orchestrator */}
-              {!runningRun && progress && (
-                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {Object.entries(progress).map(([key, value]) => (
-                    <div key={key} className="bg-white rounded-lg p-2 border border-orange-100">
-                      <div className="text-lg font-bold text-gray-900">
-                        {typeof value === 'number' ? formatNumber(value) : String(value)}
+                    {op.started_at && (
+                      <div className="text-xs text-orange-600">
+                        {formatDuration(op.started_at)}
                       </div>
-                      <div className="text-xs text-gray-500 capitalize">
-                        {key.replace(/_/g, ' ')}
+                    )}
+                  </div>
+                  
+                  {/* Progress from operation */}
+                  {op.progress && Object.keys(op.progress).length > 0 && (
+                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {Object.entries(op.progress).map(([key, value]) => (
+                        <div key={key} className="bg-white rounded-lg p-2 border border-orange-100">
+                          <div className="text-lg font-bold text-gray-900">
+                            {typeof value === 'number' ? formatNumber(value) : String(value)}
+                          </div>
+                          <div className="text-xs text-gray-500 capitalize">
+                            {key.replace(/_/g, ' ')}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              
+              {/* Show database pipeline runs */}
+              {stageRuns.map((run, i) => (
+                <div key={`run-${i}`} className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="font-semibold">{run.stage}</span>
+                      {run.current_step && <span className="text-orange-600">- {run.current_step}</span>}
+                    </div>
+                    {run.started_at && (
+                      <div className="text-xs text-orange-600">
+                        {formatDuration(run.started_at)}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Progress from database run */}
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-white rounded-lg p-2 border border-orange-100">
+                      <div className="text-lg font-bold text-green-600">
+                        {formatNumber(run.processed)}
+                      </div>
+                      <div className="text-xs text-gray-500">Processed</div>
+                    </div>
+                    <div className="bg-white rounded-lg p-2 border border-orange-100">
+                      <div className="text-lg font-bold text-gray-600">
+                        {formatNumber(run.failed)}
+                      </div>
+                      <div className="text-xs text-gray-500">Failed</div>
+                    </div>
+                  </div>
+                  
+                  {/* Recent logs from running run */}
+                  {run.logs && run.logs.length > 0 && (
+                    <div className="mt-3 max-h-32 overflow-y-auto">
+                      <div className="text-xs font-medium text-gray-500 mb-2">Recent Activity</div>
+                      <div className="space-y-1">
+                        {run.logs.slice(-5).reverse().map((log, j) => (
+                          <div 
+                            key={j} 
+                            className={`text-xs px-2 py-1 rounded ${
+                              log.level === 'warn' || log.level === 'error' 
+                                ? 'bg-red-50 text-red-700' 
+                                : 'bg-white text-gray-600'
+                            }`}
+                          >
+                            {log.msg}
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
+              ))}
               
-              {/* Recent logs from running run */}
-              {runningRun?.logs && runningRun.logs.length > 0 && (
-                <div className="mt-3 max-h-48 overflow-y-auto">
-                  <div className="text-xs font-medium text-gray-500 mb-2">Recent Activity</div>
-                  <div className="space-y-1">
-                    {runningRun.logs.slice(-10).reverse().map((log, i) => (
-                      <div 
-                        key={i} 
-                        className={`text-xs px-2 py-1 rounded ${
-                          log.level === 'warn' || log.level === 'error' 
-                            ? 'bg-red-50 text-red-700' 
-                            : 'bg-white text-gray-600'
-                        }`}
-                      >
-                        {log.msg}
+              {/* Fallback to old orchestrator progress if no specific ops/runs */}
+              {stageOps.length === 0 && stageRuns.length === 0 && progress && (
+                <div className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {status?.pipeline?.current_step || 'Running...'}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {Object.entries(progress).map(([key, value]) => (
+                      <div key={key} className="bg-white rounded-lg p-2 border border-orange-100">
+                        <div className="text-lg font-bold text-gray-900">
+                          {typeof value === 'number' ? formatNumber(value) : String(value)}
+                        </div>
+                        <div className="text-xs text-gray-500 capitalize">
+                          {key.replace(/_/g, ' ')}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -377,19 +480,15 @@ export default function PipelinePage() {
       
       // Auto-expand if a stage is running
       if (!expandedStage) {
-        if (data.pipeline.stage !== 'idle') {
-          setExpandedStage(data.pipeline.stage as StageType)
-        } else if (data.running_run?.status === 'running') {
-          // Map database stage names to UI stage names
-          const stageMap: Record<string, StageType> = {
-            'detect_ats': 'discovery',
-            'custom_crawl': 'crawl',
-            'crawl': 'crawl',
-            'enrich': 'enrich',
-            'embeddings': 'embeddings',
+        const runningOps = data.running_operations?.running_operations || {}
+        const runningRuns = data.running_runs || []
+        
+        // Find first running stage
+        for (const stageId of ['discovery', 'crawl', 'enrich', 'embeddings'] as StageType[]) {
+          if (isStageRunning(stageId, runningOps, runningRuns)) {
+            setExpandedStage(stageId)
+            break
           }
-          const uiStage = stageMap[data.running_run.stage] || 'discovery'
-          setExpandedStage(uiStage)
         }
       }
     } catch (err) {
@@ -408,12 +507,14 @@ export default function PipelinePage() {
   useEffect(() => {
     if (!autoRefresh) return
     
-    const isRunning = status?.pipeline?.stage !== 'idle' || status?.running_run?.status === 'running'
-    const interval = isRunning ? 2000 : 10000 // 2s when running, 10s otherwise
+    const runningOps = status?.running_operations?.running_operations || {}
+    const runningRuns = status?.running_runs || []
+    const hasRunningOps = Object.keys(runningOps).length > 0 || runningRuns.some(r => r.status === 'running')
+    const interval = hasRunningOps ? 2000 : 10000 // 2s when running, 10s otherwise
     
     const timer = setInterval(loadStatus, interval)
     return () => clearInterval(timer)
-  }, [autoRefresh, status?.pipeline?.stage, status?.running_run?.status, loadStatus])
+  }, [autoRefresh, status?.running_operations, status?.running_runs, loadStatus])
   
   const handleRunStage = async (stage: StageType) => {
     setRunningStage(stage)
@@ -456,7 +557,13 @@ export default function PipelinePage() {
     }
   }
   
-  const isRunning = status?.pipeline?.stage !== 'idle' || status?.running_run?.status === 'running'
+  // Check if any operations are running
+  const runningOps = status?.running_operations?.running_operations || {}
+  const runningRuns = status?.running_runs || []
+  const runningOpCount = Object.keys(runningOps).length
+  const runningRunCount = runningRuns.filter(r => r.status === 'running').length
+  const isRunning = runningOpCount > 0 || runningRunCount > 0
+  const totalRunningCount = runningOpCount + runningRunCount
   
   if (loading && !status) {
     return (
@@ -557,14 +664,14 @@ export default function PipelinePage() {
             
             <button
               onClick={handleRunFullPipeline}
-              disabled={isRunning || runningStage !== null}
+              disabled={runningOps['full_pipeline'] !== undefined || runningStage !== null}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium transition-colors ${
-                isRunning || runningStage !== null
+                runningOps['full_pipeline'] !== undefined || runningStage !== null
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-[#FF4500] hover:bg-[#E63E00] text-white'
               }`}
             >
-              {runningStage ? (
+              {runningStage || runningOps['full_pipeline'] ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <Play className="w-5 h-5" />
@@ -573,8 +680,8 @@ export default function PipelinePage() {
             </button>
           </div>
           
-          {/* Status banner when running */}
-          {isRunning && (status?.pipeline || status?.running_run) && (
+          {/* Status banner when running - shows all concurrent operations */}
+          {isRunning && (
             <div className="bg-gradient-to-r from-orange-500 to-[#FF4500] text-white rounded-xl p-4 mb-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -583,53 +690,49 @@ export default function PipelinePage() {
                   </div>
                   <div>
                     <div className="font-semibold">
-                      {status?.running_run?.current_step || status?.pipeline?.current_step || 'Running...'}
+                      {totalRunningCount > 1 
+                        ? `${totalRunningCount} operations running concurrently`
+                        : Object.values(runningOps)[0]?.current_step || 
+                          runningRuns.find(r => r.status === 'running')?.current_step ||
+                          'Running...'
+                      }
                     </div>
-                    {(status?.running_run?.started_at || status?.pipeline?.started_at) && (
-                      <div className="text-sm text-orange-100">
-                        Running for {formatDuration(status?.running_run?.started_at || status?.pipeline?.started_at || '')}
-                      </div>
-                    )}
+                    <div className="text-sm text-orange-100">
+                      {Object.keys(runningOps).length > 0 && (
+                        <span>Operations: {Object.keys(runningOps).join(', ')}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 
-                {/* Show running run progress (from database) */}
-                {status?.running_run && status.running_run.status === 'running' && (
-                  <div className="flex gap-6">
-                    <div className="text-right">
-                      <div className="text-2xl font-bold">
-                        {formatNumber(status.running_run.processed)}
-                      </div>
-                      <div className="text-xs text-orange-100">Detected</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold">
-                        {formatNumber(status.running_run.failed)}
-                      </div>
-                      <div className="text-xs text-orange-100">Not Detected</div>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Show orchestrator progress (if no running run) */}
-                {!status?.running_run && status?.pipeline?.progress && Object.keys(status.pipeline.progress).length > 0 && (
-                  <div className="flex gap-6">
-                    {Object.entries(status.pipeline.progress).map(([stage, data]) => {
-                      if (typeof data !== 'object' || data === null) return null
-                      const stageData = data as Record<string, number>
-                      return (
-                        <div key={stage} className="text-right">
-                          <div className="text-2xl font-bold">
-                            {formatNumber(stageData.processed || stageData.companies || 0)}
-                          </div>
-                          <div className="text-xs text-orange-100 capitalize">
-                            {stage} Processed
-                          </div>
+                {/* Show aggregated progress */}
+                <div className="flex gap-6">
+                  {/* Sum up processed/failed from all running runs */}
+                  {runningRuns.filter(r => r.status === 'running').length > 0 && (
+                    <>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold">
+                          {formatNumber(runningRuns.reduce((sum, r) => sum + (r.processed || 0), 0))}
                         </div>
-                      )
-                    })}
-                  </div>
-                )}
+                        <div className="text-xs text-orange-100">Processed</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold">
+                          {formatNumber(runningRuns.reduce((sum, r) => sum + (r.failed || 0), 0))}
+                        </div>
+                        <div className="text-xs text-orange-100">Failed</div>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Show count of concurrent ops */}
+                  {totalRunningCount > 1 && (
+                    <div className="text-right">
+                      <div className="text-2xl font-bold">{totalRunningCount}</div>
+                      <div className="text-xs text-orange-100">Concurrent Ops</div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -637,13 +740,9 @@ export default function PipelinePage() {
           {/* Pipeline flow visualization */}
           <div className="hidden sm:flex items-center justify-center mb-8 py-4">
             {STAGES.map((stage, index) => {
-              // Check if this stage is active via orchestrator or database run
-              const runningRunStage = status?.running_run?.stage
-              const isDbRunActive = runningRunStage === stage.id || 
-                (runningRunStage === 'detect_ats' && stage.id === 'discovery') ||
-                (runningRunStage === 'custom_crawl' && stage.id === 'crawl')
-              const isActive = status?.pipeline?.stage === stage.id || 
-                (status?.running_run?.status === 'running' && isDbRunActive)
+              const isActive = isStageRunning(stage.id, runningOps, runningRuns)
+              const { ops, runs } = getStageOperations(stage.id, runningOps, runningRuns)
+              const concurrentCount = ops.length + runs.length
               const Icon = stage.icon
               return (
                 <div key={stage.id} className="flex items-center">
@@ -656,7 +755,16 @@ export default function PipelinePage() {
                   >
                     <Icon className="w-4 h-4" />
                     <span className="text-sm font-medium">{stage.name}</span>
-                    {isActive && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isActive && (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {concurrentCount > 1 && (
+                          <span className="text-xs bg-white/20 px-1.5 py-0.5 rounded-full">
+                            {concurrentCount}
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
                   {index < STAGES.length - 1 && (
                     <ArrowRight className="w-5 h-5 mx-2 text-gray-300" />
@@ -674,12 +782,10 @@ export default function PipelinePage() {
               key={stage.id}
               stage={stage}
               status={status}
-              isActive={isRunning && status?.pipeline?.stage !== stage.id}
               isExpanded={expandedStage === stage.id}
               onToggle={() => setExpandedStage(expandedStage === stage.id ? null : stage.id)}
               onRun={() => handleRunStage(stage.id)}
               isRunning={runningStage === stage.id}
-              runningRun={status?.running_run}
             />
           ))}
         </div>

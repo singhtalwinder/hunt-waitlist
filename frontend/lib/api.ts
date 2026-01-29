@@ -279,8 +279,23 @@ export interface RunningPipelineRun {
   logs: PipelineRunLog[];
 }
 
+// New: Operation status from the registry (for concurrent operations)
+export interface OperationStatus {
+  operation_type: string;
+  started_at: string;
+  current_step: string;
+  progress: Record<string, unknown>;
+}
+
+export interface RunningOperations {
+  running_operations: Record<string, OperationStatus>;
+  count: number;
+}
+
 export interface PipelineStatusResponse {
   pipeline: PipelineStatus;
+  running_operations: RunningOperations;  // New: all concurrent operations
+  running_runs: RunningPipelineRun[];     // Changed: array of database pipeline runs
   scheduler: {
     running: boolean;
     last_run: string | null;
@@ -288,6 +303,7 @@ export interface PipelineStatusResponse {
     interval_hours: number;
   };
   stats: PipelineStats;
+  // Legacy support
   running_run?: RunningPipelineRun;
 }
 

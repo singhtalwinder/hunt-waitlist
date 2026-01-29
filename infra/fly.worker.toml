@@ -1,0 +1,20 @@
+# Fly.io configuration for Hunt Worker
+app = "hunt-worker"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "../infra/docker/Dockerfile.worker"
+
+[env]
+  ENVIRONMENT = "production"
+  DEBUG = "false"
+
+# Worker doesn't need HTTP service
+[processes]
+  worker = "dramatiq app.workers.tasks --processes 2 --threads 4"
+  scheduler = "python -m app.workers.scheduler"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 1024

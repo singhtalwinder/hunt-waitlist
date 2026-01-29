@@ -1,0 +1,457 @@
+"""ATS type detection from URLs and page content."""
+
+import re
+from typing import Optional, Tuple
+from urllib.parse import urlparse
+
+import httpx
+import structlog
+
+logger = structlog.get_logger()
+
+# Known ATS URL patterns
+ATS_PATTERNS = {
+    # Already implemented
+    "greenhouse": [
+        r"boards\.greenhouse\.io/([^/]+)",
+        r"job-boards\.greenhouse\.io/([^/]+)",
+        r"([^.]+)\.greenhouse\.io",
+    ],
+    "lever": [
+        r"jobs\.lever\.co/([^/]+)",
+        r"([^.]+)\.lever\.co",
+    ],
+    "ashby": [
+        r"jobs\.ashbyhq\.com/([^/]+)",
+        r"([^.]+)\.ashbyhq\.com",
+    ],
+    "workable": [
+        r"apply\.workable\.com/([^/]+)",
+        r"([^.]+)\.workable\.com",
+    ],
+    "workday": [
+        r"([^.]+)\.wd\d+\.myworkdayjobs\.com",
+        r"workday\.com",
+    ],
+    # New ATS platforms
+    "bamboohr": [
+        r"([^.]+)\.bamboohr\.com/careers",
+        r"([^.]+)\.bamboohr\.com/jobs",
+    ],
+    "zoho_recruit": [
+        r"careers\.zohorecruitcloud\.com/([^/]+)",
+        r"([^.]+)\.zohorecruit\.com",
+        r"recruit\.zoho\.com/([^/]+)",
+    ],
+    "bullhorn": [
+        r"([^.]+)\.bullhornstaffing\.com",
+        r"cls\d+\.bullhornstaffing\.com/([^/]+)",
+    ],
+    "gem": [
+        r"jobs\.gem\.com/([^/]+)",
+        r"([^.]+)\.gem\.com/careers",
+    ],
+    "jazzhr": [
+        r"([^.]+)\.applytojob\.com",
+        r"app\.jazz\.co/([^/]+)",
+    ],
+    "freshteam": [
+        r"([^.]+)\.freshteam\.com/jobs",
+        r"([^.]+)\.freshteam\.com",
+    ],
+    "recruitee": [
+        r"([^.]+)\.recruitee\.com",
+        r"careers\.recruitee\.com/([^/]+)",
+    ],
+    "pinpoint": [
+        r"([^.]+)\.pinpointhq\.com",
+        r"careers\.([^.]+)\.pinpointhq\.com",
+    ],
+    "pcrecruiter": [
+        r"([^.]+)\.pcrecruiter\.net",
+        r"jobs\.pcrecruiter\.net/([^/]+)",
+    ],
+    "recruitcrm": [
+        r"([^.]+)\.recruitcrm\.io",
+        r"portal\.recruitcrm\.io/([^/]+)",
+    ],
+    "manatal": [
+        r"([^.]+)\.manatal\.com",
+        r"jobs\.manatal\.com/([^/]+)",
+    ],
+    "recooty": [
+        r"([^.]+)\.recooty\.com",
+        r"jobs\.recooty\.com/([^/]+)",
+    ],
+    "successfactors": [
+        r"([^.]+)\.successfactors\.com",
+        r"careers\.([^.]+)\.successfactors\.eu",
+        r"performancemanager\d*\.successfactors\.com/([^/]+)",
+    ],
+    "gohire": [
+        r"([^.]+)\.gohire\.io",
+        r"careers\.gohire\.io/([^/]+)",
+    ],
+    "folkshr": [
+        r"([^.]+)\.folkshr\.com",
+        r"careers\.folkshr\.com/([^/]+)",
+    ],
+    "boon": [
+        r"([^.]+)\.goboon\.co",
+        r"referrals\.goboon\.co/([^/]+)",
+    ],
+    "talentreef": [
+        r"([^.]+)\.talentreef\.com",
+        r"careers\.talentreef\.com/([^/]+)",
+    ],
+    "eddy": [
+        r"([^.]+)\.eddy\.com/careers",
+        r"careers\.eddy\.com/([^/]+)",
+    ],
+    "jobvite": [
+        r"jobs\.jobvite\.com/([^/]+)",
+        r"([^.]+)\.jobvite\.com",
+    ],
+    "icims": [
+        r"careers-([^.]+)\.icims\.com",
+        r"([^.]+)\.icims\.com",
+    ],
+    "smartrecruiters": [
+        r"jobs\.smartrecruiters\.com/([^/]+)",
+        r"([^.]+)\.smartrecruiters\.com",
+    ],
+}
+
+# HTML patterns for ATS detection
+HTML_PATTERNS = {
+    "greenhouse": [
+        r"greenhouse\.io",
+        r"grnhse_",
+        r"greenhouse-job-board",
+    ],
+    "lever": [
+        r"lever\.co",
+        r"lever-jobs",
+        r"LeverJobsContainer",
+    ],
+    "ashby": [
+        r"ashbyhq\.com",
+        r"ashby-job-posting",
+    ],
+    "workable": [
+        r"workable\.com",
+        r"whr-embed",
+        r"workable-job-widget",
+    ],
+    "workday": [
+        r"workday",
+        r"wd-candidate",
+    ],
+    "bamboohr": [
+        r"bamboohr\.com",
+        r"BambooHR",
+        r"bamboo-job-board",
+    ],
+    "zoho_recruit": [
+        r"zohorecruit",
+        r"zohorecruitcloud",
+        r"zoho-recruit",
+    ],
+    "bullhorn": [
+        r"bullhorn",
+        r"bullhornstaffing",
+    ],
+    "gem": [
+        r"gem\.com/jobs",
+        r"gem-careers",
+    ],
+    "jazzhr": [
+        r"jazzhr",
+        r"applytojob\.com",
+        r"jazz\.co",
+    ],
+    "freshteam": [
+        r"freshteam",
+        r"freshworks",
+    ],
+    "recruitee": [
+        r"recruitee",
+        r"recruitee-careers",
+    ],
+    "pinpoint": [
+        r"pinpointhq",
+        r"pinpoint-careers",
+    ],
+    "pcrecruiter": [
+        r"pcrecruiter",
+    ],
+    "recruitcrm": [
+        r"recruitcrm",
+    ],
+    "manatal": [
+        r"manatal",
+    ],
+    "recooty": [
+        r"recooty",
+    ],
+    "successfactors": [
+        r"successfactors",
+        r"SAP.*SuccessFactors",
+    ],
+    "gohire": [
+        r"gohire",
+    ],
+    "folkshr": [
+        r"folkshr",
+        r"folks-careers",
+    ],
+    "boon": [
+        r"goboon\.co",
+        r"boon-referral",
+    ],
+    "talentreef": [
+        r"talentreef",
+    ],
+    "eddy": [
+        r"eddy\.com/careers",
+    ],
+    "jobvite": [
+        r"jobvite",
+    ],
+    "icims": [
+        r"icims",
+    ],
+    "smartrecruiters": [
+        r"smartrecruiters",
+    ],
+}
+
+
+def detect_ats_from_url(url: str) -> Tuple[Optional[str], Optional[str]]:
+    """Detect ATS type and identifier from URL pattern."""
+    for ats_type, patterns in ATS_PATTERNS.items():
+        for pattern in patterns:
+            match = re.search(pattern, url, re.IGNORECASE)
+            if match:
+                identifier = match.group(1) if match.groups() else None
+                return ats_type, identifier
+
+    return None, None
+
+
+def detect_ats_from_html(html: str) -> Optional[str]:
+    """Detect ATS type from HTML content."""
+    html_lower = html.lower()
+
+    for ats_type, patterns in HTML_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, html_lower):
+                return ats_type
+
+    return None
+
+
+async def detect_ats_type(
+    client: httpx.AsyncClient,
+    url: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Detect ATS type from URL and optionally page content."""
+    # First try URL-based detection
+    ats_type, identifier = detect_ats_from_url(url)
+
+    if ats_type:
+        return ats_type, identifier
+
+    # If not detected from URL, try fetching the page
+    try:
+        response = await client.get(url)
+        response.raise_for_status()
+
+        html = response.text
+        ats_type = detect_ats_from_html(html)
+
+        # Try to extract identifier from page
+        if ats_type:
+            # Look for embedded config or data attributes
+            identifier = extract_identifier_from_html(html, ats_type)
+
+        return ats_type, identifier
+
+    except Exception as e:
+        logger.warning("Failed to fetch page for ATS detection", url=url, error=str(e))
+        return None, None
+
+
+def extract_identifier_from_html(html: str, ats_type: str) -> Optional[str]:
+    """
+    Extract company identifier from HTML based on ATS type.
+    
+    This is the canonical function for extracting ATS identifiers from HTML content.
+    Used by both discovery and crawl engines.
+    
+    Checks for:
+    - Data attributes (e.g., data-board-token)
+    - Embedded script URLs (e.g., script src containing ATS domain)
+    - Inline JavaScript config
+    - Direct URLs in the page
+    """
+    if ats_type == "greenhouse":
+        # Look for greenhouse board token in various locations
+        match = re.search(r'data-board-token="([^"]+)"', html)
+        if match:
+            return match.group(1)
+        # From Greenhouse script settings
+        match = re.search(r"Grnhse\.Settings\.boardToken\s*=\s*['\"]([^'\"]+)['\"]", html)
+        if match:
+            return match.group(1)
+        # From embed script URL with for= parameter
+        match = re.search(r'boards\.greenhouse\.io/embed/job_board[^"\']*for=([^&"\']+)', html)
+        if match:
+            return match.group(1)
+        # From embedded URL
+        match = re.search(r'boards\.greenhouse\.io/([^/"\']+)', html)
+        if match:
+            return match.group(1)
+        # From API URL
+        match = re.search(r'boards-api\.greenhouse\.io/v1/boards/([^/"\']+)', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "lever":
+        # Look for lever site ID
+        match = re.search(r'data-lever-site="([^"]+)"', html)
+        if match:
+            return match.group(1)
+        # From embed script
+        match = re.search(r'jobs\.lever\.co/([^/"\']+)/embed', html)
+        if match:
+            return match.group(1)
+        # From URL in page
+        match = re.search(r"jobs\.lever\.co/([^/\"']+)", html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "ashby":
+        # Look for ashby job board ID in various patterns
+        # Pattern 1: Embed script like <script src="https://jobs.ashbyhq.com/company.name/embed">
+        match = re.search(r'jobs\.ashbyhq\.com/([^/\"\']+)/embed', html)
+        if match:
+            return match.group(1)
+        # Pattern 2: Direct URL pattern
+        match = re.search(r"jobs\.ashbyhq\.com/([^/\"']+)", html)
+        if match:
+            return match.group(1)
+        # Pattern 3: API URL in script
+        match = re.search(r'api\.ashbyhq\.com/posting-api/job-board/([^/\"\']+)', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "workable":
+        # From embed script or URL
+        match = re.search(r'apply\.workable\.com/([^/"\']+)', html)
+        if match:
+            return match.group(1)
+        # From workable integration embed
+        match = re.search(r'workable\.com/integrations/embed/([^/"\']+)', html)
+        if match:
+            return match.group(1)
+        # From subdomain in script data
+        match = re.search(r'"subdomain"\s*:\s*"([^"]+)"', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "recruitee":
+        # From embedded script or URL
+        match = re.search(r'([^./]+)\.recruitee\.com', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "bamboohr":
+        match = re.search(r'([^./]+)\.bamboohr\.com', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "smartrecruiters":
+        match = re.search(r'jobs\.smartrecruiters\.com/([^/"\']+)', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "jobvite":
+        match = re.search(r'jobs\.jobvite\.com/([^/"\']+)', html)
+        if match:
+            return match.group(1)
+
+    elif ats_type == "icims":
+        match = re.search(r'careers-([^.]+)\.icims\.com', html)
+        if match:
+            return match.group(1)
+        match = re.search(r'([^./]+)\.icims\.com', html)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+async def get_careers_url(
+    client: httpx.AsyncClient,
+    domain: str,
+) -> Optional[str]:
+    """Try to find the careers page URL for a domain."""
+    # Common careers page paths
+    paths = [
+        "/careers",
+        "/jobs",
+        "/careers/",
+        "/jobs/",
+        "/join-us",
+        "/join",
+        "/work-with-us",
+        "/about/careers",
+        "/company/careers",
+    ]
+
+    base_url = f"https://{domain}"
+
+    for path in paths:
+        try:
+            url = f"{base_url}{path}"
+            response = await client.head(url, follow_redirects=True)
+
+            if response.status_code == 200:
+                # Check if redirected to an ATS
+                final_url = str(response.url)
+                ats_type, _ = detect_ats_from_url(final_url)
+
+                if ats_type:
+                    return final_url
+
+                # Otherwise return the careers page
+                return final_url
+
+        except Exception:
+            continue
+
+    # Try fetching the homepage and looking for careers links
+    try:
+        response = await client.get(base_url)
+        if response.status_code == 200:
+            html = response.text
+
+            # Look for careers links
+            patterns = [
+                r'href="([^"]*(?:careers|jobs)[^"]*)"',
+                r"href='([^']*(?:careers|jobs)[^']*)'",
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, html, re.IGNORECASE)
+                for match in matches:
+                    if match.startswith("http"):
+                        return match
+                    elif match.startswith("/"):
+                        return f"{base_url}{match}"
+
+    except Exception:
+        pass
+
+    return None

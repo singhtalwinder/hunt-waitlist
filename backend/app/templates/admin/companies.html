@@ -1,0 +1,249 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Companies{% endblock %}
+{% block header %}Companies{% endblock %}
+
+{% block content %}
+<div x-data="companiesApp()" x-init="init()">
+    <!-- Message Container -->
+    <div id="message-container" class="mb-4 lg:mb-6"></div>
+    
+    <!-- Filters -->
+    <div class="bg-white rounded-xl border border-gray-200 p-3 lg:p-4 mb-4 lg:mb-6">
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <div class="flex-1">
+                <input type="text" 
+                       x-model="search" 
+                       @input.debounce.300ms="filterCompanies()"
+                       placeholder="Search companies..." 
+                       class="w-full px-3 lg:px-4 py-2 lg:py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors text-sm">
+            </div>
+            <div class="flex gap-2 sm:gap-3">
+                <select x-model="atsFilter" @change="loadCompanies()"
+                        class="flex-1 sm:flex-none px-3 lg:px-4 py-2 lg:py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cta/20 focus:border-cta transition-colors text-sm">
+                    <option value="">All ATS</option>
+                    <option value="greenhouse">Greenhouse</option>
+                    <option value="lever">Lever</option>
+                    <option value="ashby">Ashby</option>
+                    <option value="workday">Workday</option>
+                </select>
+                <button @click="crawlAll()" 
+                        :disabled="crawling"
+                        class="px-3 lg:px-5 py-2 lg:py-2.5 bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm whitespace-nowrap">
+                    <span x-show="!crawling">Crawl</span>
+                    <span x-show="crawling">...</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Companies Table -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <!-- Desktop Table -->
+        <div class="hidden lg:block table-responsive">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-200 bg-gray-50">
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Domain</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ATS</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Priority</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Last Crawled</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <template x-for="company in filteredCompanies" :key="company.id">
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-6 py-4">
+                                <span x-text="company.name" class="font-medium text-black"></span>
+                            </td>
+                            <td class="px-6 py-4">
+                                <a :href="'https://' + company.domain" target="_blank" 
+                                   class="text-gray-600 hover:text-cta transition-colors" x-text="company.domain"></a>
+                            </td>
+                            <td class="px-6 py-4">
+                                <span class="px-2.5 py-1 text-xs font-medium rounded-full" 
+                                      :class="{
+                                          'bg-green-50 text-green-700': company.ats_type === 'greenhouse',
+                                          'bg-purple-50 text-purple-700': company.ats_type === 'lever',
+                                          'bg-orange-50 text-orange-700': company.ats_type === 'ashby',
+                                          'bg-blue-50 text-blue-700': company.ats_type === 'workday',
+                                          'bg-gray-100 text-gray-600': !company.ats_type
+                                      }"
+                                      x-text="company.ats_type || 'unknown'">
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-gray-600" x-text="company.crawl_priority"></td>
+                            <td class="px-6 py-4 text-sm text-gray-500">
+                                <span x-text="company.last_crawled_at ? formatDate(company.last_crawled_at) : 'Never'"></span>
+                            </td>
+                            <td class="px-6 py-4">
+                                <button @click="crawlCompany(company)" 
+                                        :disabled="company.crawling"
+                                        class="px-3.5 py-1.5 text-sm font-medium bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg transition-colors">
+                                    <span x-show="!company.crawling">Crawl</span>
+                                    <span x-show="company.crawling">...</span>
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="filteredCompanies.length === 0">
+                        <td colspan="6" class="px-6 py-8 text-center text-gray-500">No companies found</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Mobile Cards -->
+        <div class="lg:hidden divide-y divide-gray-100">
+            <template x-for="company in filteredCompanies" :key="company.id">
+                <div class="p-4">
+                    <div class="flex items-start justify-between gap-3 mb-2">
+                        <div class="min-w-0">
+                            <span x-text="company.name" class="font-medium text-black text-sm block truncate"></span>
+                            <a :href="'https://' + company.domain" target="_blank" 
+                               class="text-xs text-gray-500 hover:text-cta" x-text="company.domain"></a>
+                        </div>
+                        <button @click="crawlCompany(company)" 
+                                :disabled="company.crawling"
+                                class="px-3 py-1.5 text-xs font-medium bg-cta hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg transition-colors flex-shrink-0">
+                            <span x-show="!company.crawling">Crawl</span>
+                            <span x-show="company.crawling">...</span>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs">
+                        <span class="px-2 py-0.5 rounded-full" 
+                              :class="{
+                                  'bg-green-50 text-green-700': company.ats_type === 'greenhouse',
+                                  'bg-purple-50 text-purple-700': company.ats_type === 'lever',
+                                  'bg-orange-50 text-orange-700': company.ats_type === 'ashby',
+                                  'bg-blue-50 text-blue-700': company.ats_type === 'workday',
+                                  'bg-gray-100 text-gray-600': !company.ats_type
+                              }"
+                              x-text="company.ats_type || 'unknown'">
+                        </span>
+                        <span class="text-gray-400">·</span>
+                        <span class="text-gray-500" x-text="company.last_crawled_at ? formatDate(company.last_crawled_at) : 'Never crawled'"></span>
+                    </div>
+                </div>
+            </template>
+            <div x-show="filteredCompanies.length === 0" class="p-8 text-center text-gray-500">
+                No companies found
+            </div>
+        </div>
+        
+        <!-- Pagination -->
+        <div class="px-4 lg:px-6 py-3 lg:py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p class="text-xs lg:text-sm text-gray-500">
+                <span class="font-medium text-black" x-text="filteredCompanies.length"></span> of 
+                <span class="font-medium text-black" x-text="total"></span> companies
+            </p>
+            <div class="flex items-center gap-2">
+                <button @click="prevPage()" :disabled="page === 1"
+                        class="px-3 lg:px-4 py-2 text-sm font-medium border border-gray-200 hover:border-gray-300 disabled:opacity-50 rounded-lg transition-colors">
+                    Prev
+                </button>
+                <span class="px-3 lg:px-4 py-2 text-sm text-gray-500">Page <span x-text="page"></span></span>
+                <button @click="nextPage()" :disabled="!hasMore"
+                        class="px-3 lg:px-4 py-2 text-sm font-medium border border-gray-200 hover:border-gray-300 disabled:opacity-50 rounded-lg transition-colors">
+                    Next
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function companiesApp() {
+    return {
+        companies: [],
+        filteredCompanies: [],
+        total: 0,
+        search: '',
+        atsFilter: '',
+        page: 1,
+        pageSize: 50,
+        hasMore: false,
+        crawling: false,
+
+        async init() {
+            await this.loadCompanies();
+        },
+
+        async loadCompanies() {
+            try {
+                let url = `/api/admin/companies?page=${this.page}&page_size=${this.pageSize}`;
+                if (this.atsFilter) {
+                    url += `&ats_type=${this.atsFilter}`;
+                }
+                const res = await fetch(url);
+                const data = await res.json();
+                this.companies = data.companies.map(c => ({ ...c, crawling: false }));
+                this.filteredCompanies = this.companies;
+                this.total = data.total;
+                this.hasMore = data.companies.length === this.pageSize;
+                this.filterCompanies();
+            } catch (e) {
+                console.error('Failed to load companies:', e);
+            }
+        },
+
+        filterCompanies() {
+            this.filteredCompanies = this.companies.filter(c => {
+                const matchesSearch = !this.search || 
+                    c.name.toLowerCase().includes(this.search.toLowerCase()) ||
+                    (c.domain && c.domain.toLowerCase().includes(this.search.toLowerCase()));
+                return matchesSearch;
+            });
+        },
+
+        async crawlCompany(company) {
+            company.crawling = true;
+            try {
+                const res = await fetch(`/api/internal/crawl/trigger?company_id=${company.id}`, { method: 'POST' });
+                const data = await res.json();
+                showMessage(`Crawl triggered for ${company.name}`, 'success');
+            } catch (e) {
+                showMessage(`Failed to crawl ${company.name}: ${e.message}`, 'error');
+            } finally {
+                company.crawling = false;
+            }
+        },
+
+        async crawlAll() {
+            this.crawling = true;
+            try {
+                let url = '/api/internal/crawl/trigger';
+                if (this.atsFilter) {
+                    url += `?ats_type=${this.atsFilter}`;
+                }
+                const res = await fetch(url, { method: 'POST' });
+                const data = await res.json();
+                showMessage(data.message || 'Crawl triggered for all companies', 'success');
+            } catch (e) {
+                showMessage(`Failed to start crawl: ${e.message}`, 'error');
+            } finally {
+                this.crawling = false;
+            }
+        },
+
+        prevPage() {
+            if (this.page > 1) {
+                this.page--;
+                this.loadCompanies();
+            }
+        },
+
+        nextPage() {
+            if (this.hasMore) {
+                this.page++;
+                this.loadCompanies();
+            }
+        }
+    };
+}
+</script>
+{% endblock %}
