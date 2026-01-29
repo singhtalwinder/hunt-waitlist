@@ -336,64 +336,33 @@ class PipelineOrchestrator:
         
         return results
     
-    async def _run_crawl(self, limit: int = 100, run_id: Optional[UUID] = None) -> dict:
+    async def _run_crawl(self, limit: int = 100, run_id: Optional[UUID] = None, batch_size: int = 500, continuous: bool = True) -> dict:
         """Crawl jobs from companies.
         
+        Runs continuously in batches until no more companies need crawling.
+        
         Args:
-            limit: Max companies to crawl
+            limit: Max companies to crawl per batch (deprecated, use batch_size)
             run_id: Optional pipeline_runs ID for logging
+            batch_size: Number of companies to process per batch (default 500)
+            continuous: If True, keep running batches until no more companies found
         """
         from app.engines.crawl.service import CrawlEngine
         from app.engines.crawl.rate_limiter import RateLimiter
         
-        results = {"companies_crawled": 0, "jobs_found": 0, "failed": 0, "cancelled": False}
+        # Use batch_size if limit is the old default, otherwise respect explicit limit
+        effective_batch_size = batch_size if limit == 100 else min(limit, batch_size)
         
-        async with async_session_factory() as db:
-            # Find companies that need crawling
-            query = await db.execute(text('''
-                SELECT c.id, c.name
-                FROM companies c
-                WHERE c.is_active = true
-                AND c.ats_type IS NOT NULL
-                AND (
-                    c.last_crawled_at IS NULL 
-                    OR c.last_crawled_at < NOW() - INTERVAL '24 hours'
-                )
-                ORDER BY c.last_crawled_at NULLS FIRST
-                LIMIT :limit
-            '''), {"limit": limit})
-            companies = query.fetchall()
-            total_companies = len(companies)
+        results = {"companies_crawled": 0, "jobs_found": 0, "failed": 0, "cancelled": False, "batches": 0}
+        
+        rate_limiter = RateLimiter()
+        batch_number = 0
+        
+        while True:
+            batch_number += 1
             
-            self._status.progress["crawl"] = {
-                "total": total_companies,
-                "completed": 0,
-                "jobs_found": 0,
-            }
-            
-            if not companies:
-                if run_id:
-                    await log_to_run(
-                        db, run_id, "info", "No companies to crawl",
-                        current_step="Completed - no companies found"
-                    )
-                return results
-            
-            if run_id:
-                await log_to_run(
-                    db, run_id, "info", f"Found {total_companies} companies to crawl",
-                    current_step=f"Crawling 0/{total_companies}",
-                    data={"total": total_companies}
-                )
-            
-            # Crawl each company
-            rate_limiter = RateLimiter()
-            success = 0
-            failed = 0
-            jobs_found = 0
-            
-            for i, (company_id, company_name) in enumerate(companies):
-                # Check for cancellation
+            async with async_session_factory() as db:
+                # Check for cancellation at the start of each batch
                 if run_id and await check_if_cancelled(db, run_id):
                     results["cancelled"] = True
                     await log_to_run(
@@ -402,80 +371,159 @@ class PipelineOrchestrator:
                     )
                     break
                 
-                # Log that we're starting to crawl this company
+                # Find companies that need crawling
+                query = await db.execute(text('''
+                    SELECT c.id, c.name
+                    FROM companies c
+                    WHERE c.is_active = true
+                    AND c.ats_type IS NOT NULL
+                    AND (
+                        c.last_crawled_at IS NULL 
+                        OR c.last_crawled_at < NOW() - INTERVAL '24 hours'
+                    )
+                    ORDER BY c.last_crawled_at NULLS FIRST
+                    LIMIT :limit
+                '''), {"limit": effective_batch_size})
+                companies = query.fetchall()
+                batch_count = len(companies)
+                
+                # If no companies found, we're done
+                if not companies:
+                    if batch_number == 1:
+                        if run_id:
+                            await log_to_run(
+                                db, run_id, "info", "No companies to crawl",
+                                current_step="Completed - no companies found"
+                            )
+                        results["batches"] = 0
+                        return results
+                    else:
+                        logger.info(f"No more companies to crawl after {batch_number - 1} batches")
+                        break
+                
+                self._status.progress["crawl"] = {
+                    "batch": batch_number,
+                    "batch_total": batch_count,
+                    "completed": 0,
+                    "jobs_found": results["jobs_found"],
+                    "total_crawled": results["companies_crawled"],
+                }
+                
                 if run_id:
                     await log_to_run(
-                        db, run_id, "info",
-                        f"Crawling {company_name}...",
-                        current_step=f"Crawling {i+1}/{total_companies}: {company_name}",
-                        progress_count=success
+                        db, run_id, "info", 
+                        f"Batch {batch_number}: Found {batch_count} companies to crawl (total so far: {results['companies_crawled']})",
+                        current_step=f"Batch {batch_number}: Crawling 0/{batch_count}",
+                        data={"batch": batch_number, "batch_count": batch_count, "total_crawled": results["companies_crawled"]}
                     )
                 
-                try:
-                    async with async_session_factory() as crawl_db:
-                        engine = CrawlEngine(crawl_db, rate_limiter)
-                        result = await engine.crawl_company(company_id)
-                        
-                        if result.get("status") == "success":
-                            success += 1
-                            company_jobs = result.get("jobs_extracted", 0)
-                            jobs_found += company_jobs
+                batch_success = 0
+                batch_failed = 0
+                batch_jobs = 0
+                
+                for i, (company_id, company_name) in enumerate(companies):
+                    # Check for cancellation
+                    if run_id and await check_if_cancelled(db, run_id):
+                        results["cancelled"] = True
+                        results["companies_crawled"] += batch_success
+                        results["jobs_found"] += batch_jobs
+                        results["failed"] += batch_failed
+                        results["batches"] = batch_number
+                        await log_to_run(
+                            db, run_id, "warn", "Crawl cancelled by user",
+                            current_step="Cancelled"
+                        )
+                        return results
+                    
+                    try:
+                        async with async_session_factory() as crawl_db:
+                            engine = CrawlEngine(crawl_db, rate_limiter)
+                            result = await engine.crawl_company(company_id)
                             
-                            if run_id:
-                                snapshot = result.get("snapshot")
-                                snapshot_id = str(snapshot.id) if snapshot else None
-                                if company_jobs > 0:
+                            if result.get("status") == "success":
+                                batch_success += 1
+                                company_jobs = result.get("jobs_extracted", 0)
+                                batch_jobs += company_jobs
+                                
+                                if run_id and company_jobs > 0:
+                                    snapshot = result.get("snapshot")
+                                    snapshot_id = str(snapshot.id) if snapshot else None
                                     await log_to_run(
                                         db, run_id, "info",
                                         f"Found {company_jobs} jobs from {company_name}",
-                                        current_step=f"Crawling {i+1}/{total_companies}: {company_name}",
-                                        progress_count=success,
+                                        current_step=f"Batch {batch_number}: {i+1}/{batch_count}",
+                                        progress_count=results["companies_crawled"] + batch_success,
                                         data={"company": company_name, "jobs": company_jobs, "snapshot_id": snapshot_id}
                                     )
-                                else:
+                            else:
+                                batch_failed += 1
+                                error_msg = result.get("error", "Unknown error")
+                                if run_id:
                                     await log_to_run(
-                                        db, run_id, "info",
-                                        f"Crawled {company_name}" + (" (unchanged)" if result.get("unchanged") else ""),
-                                        current_step=f"Crawling {i+1}/{total_companies}",
-                                        progress_count=success,
-                                        data={"company": company_name, "snapshot_id": snapshot_id}
+                                        db, run_id, "warn",
+                                        f"Failed {company_name}: {error_msg}",
+                                        current_step=f"Batch {batch_number}: {i+1}/{batch_count}",
+                                        failed_count=results["failed"] + batch_failed,
+                                        data={"company": company_name, "error": error_msg}
                                     )
-                        else:
-                            failed += 1
-                            error_msg = result.get("error", "Unknown error")
-                            if run_id:
-                                await log_to_run(
-                                    db, run_id, "warn",
-                                    f"Failed {company_name}: {error_msg}",
-                                    current_step=f"Crawling {i+1}/{total_companies}",
-                                    failed_count=failed,
-                                    data={"company": company_name, "error": error_msg, "reason": result.get("reason")}
-                                )
-                except Exception as e:
-                    logger.debug(f"Crawl failed for {company_name}: {e}")
-                    failed += 1
-                    if run_id:
+                    except Exception as e:
+                        logger.debug(f"Crawl failed for {company_name}: {e}")
+                        batch_failed += 1
+                        if run_id:
+                            await log_to_run(
+                                db, run_id, "error",
+                                f"Error crawling {company_name}: {str(e)[:80]}",
+                                current_step=f"Batch {batch_number}: {i+1}/{batch_count}",
+                                failed_count=results["failed"] + batch_failed,
+                                data={"company": company_name, "error": str(e)[:200]}
+                            )
+                    
+                    self._status.progress["crawl"]["completed"] = i + 1
+                    self._status.progress["crawl"]["jobs_found"] = results["jobs_found"] + batch_jobs
+                    
+                    # Log progress every 50 companies
+                    if run_id and (i + 1) % 50 == 0:
                         await log_to_run(
-                            db, run_id, "error",
-                            f"Error crawling {company_name}: {str(e)[:80]}",
-                            current_step=f"Crawling {i+1}/{total_companies}",
-                            failed_count=failed,
-                            data={"company": company_name, "error": str(e)[:200]}
+                            db, run_id, "info",
+                            f"Batch {batch_number} progress: {i+1}/{batch_count} ({batch_jobs} jobs found)",
+                            current_step=f"Batch {batch_number}: {i+1}/{batch_count}",
+                            progress_count=results["companies_crawled"] + batch_success
                         )
                 
-                self._status.progress["crawl"]["completed"] = i + 1
-                self._status.progress["crawl"]["jobs_found"] = jobs_found
-            
-            results["companies_crawled"] = success
-            results["jobs_found"] = jobs_found
-            results["failed"] = failed
-            
-            if run_id and not results["cancelled"]:
+                # Update totals
+                results["companies_crawled"] += batch_success
+                results["jobs_found"] += batch_jobs
+                results["failed"] += batch_failed
+                results["batches"] = batch_number
+                
+                logger.info(
+                    f"Batch {batch_number} complete",
+                    batch_success=batch_success,
+                    batch_jobs=batch_jobs,
+                    total_crawled=results["companies_crawled"],
+                    total_jobs=results["jobs_found"],
+                )
+                
+                if run_id:
+                    await log_to_run(
+                        db, run_id, "info",
+                        f"Batch {batch_number} complete: {batch_success} companies, {batch_jobs} jobs. Total: {results['companies_crawled']} companies, {results['jobs_found']} jobs",
+                        current_step=f"Batch {batch_number} complete",
+                        progress_count=results["companies_crawled"],
+                        data={"batch": batch_number, "batch_success": batch_success, "batch_jobs": batch_jobs}
+                    )
+                
+                # If not continuous mode or we processed fewer than batch_size, we're done
+                if not continuous or batch_count < effective_batch_size:
+                    break
+        
+        if run_id and not results["cancelled"]:
+            async with async_session_factory() as db:
                 await log_to_run(
                     db, run_id, "info",
-                    f"Crawl complete: {success} companies, {jobs_found} jobs found, {failed} failed",
-                    progress_count=success,
-                    failed_count=failed
+                    f"Crawl complete: {results['companies_crawled']} companies, {results['jobs_found']} jobs found, {results['failed']} failed in {results['batches']} batches",
+                    progress_count=results["companies_crawled"],
+                    failed_count=results["failed"]
                 )
         
         return results
@@ -528,7 +576,7 @@ class PipelineOrchestrator:
                     result = await service.enrich_jobs_batch(
                         ats_type=ats_type,
                         limit=limit,
-                        concurrency=15,
+                        concurrency=10,  # Keep below pool limit (15) to leave room for parent sessions
                     )
                     
                     ats_success = result.get("success", 0)
@@ -758,87 +806,150 @@ class PipelineOrchestrator:
         ats_type: str,
         limit: int = 100,
         run_id: Optional[UUID] = None,
+        batch_size: int = 500,
+        continuous: bool = True,
     ) -> dict:
-        """Crawl jobs from companies with a specific ATS type."""
+        """Crawl jobs from companies with a specific ATS type.
+        
+        Runs continuously in batches until no more companies need crawling.
+        
+        Args:
+            ats_type: The ATS type to crawl
+            limit: Max companies to crawl per batch (deprecated, use batch_size)
+            run_id: Optional pipeline_runs ID for logging
+            batch_size: Number of companies to process per batch (default 500)
+            continuous: If True, keep running batches until no more companies found
+        """
         from app.engines.crawl.service import CrawlEngine
         from app.engines.crawl.rate_limiter import RateLimiter
         
-        results = {"companies_crawled": 0, "jobs_found": 0, "failed": 0, "cancelled": False, "ats_type": ats_type}
+        # Use batch_size if limit is the old default, otherwise respect explicit limit
+        effective_batch_size = batch_size if limit == 100 else min(limit, batch_size)
         
-        async with async_session_factory() as db:
-            # Find companies with this ATS type that need crawling
-            query = await db.execute(text('''
-                SELECT c.id, c.name
-                FROM companies c
-                WHERE c.is_active = true
-                AND c.ats_type = :ats_type
-                AND (
-                    c.last_crawled_at IS NULL 
-                    OR c.last_crawled_at < NOW() - INTERVAL '24 hours'
-                )
-                ORDER BY c.last_crawled_at NULLS FIRST
-                LIMIT :limit
-            '''), {"ats_type": ats_type, "limit": limit})
-            companies = query.fetchall()
-            total_companies = len(companies)
+        results = {"companies_crawled": 0, "jobs_found": 0, "failed": 0, "cancelled": False, "ats_type": ats_type, "batches": 0}
+        
+        rate_limiter = RateLimiter()
+        batch_number = 0
+        
+        while True:
+            batch_number += 1
             
-            self._registry.update_progress(f"crawl_{ats_type}", f"0/{total_companies}", {
-                "total": total_companies,
-                "completed": 0,
-                "jobs_found": 0,
-            })
-            
-            if not companies:
-                if run_id:
-                    await log_to_run(
-                        db, run_id, "info", f"No {ats_type} companies to crawl",
-                        current_step="Completed - no companies found"
-                    )
-                return results
-            
-            if run_id:
-                await log_to_run(
-                    db, run_id, "info", f"Found {total_companies} {ats_type} companies to crawl",
-                    current_step=f"Crawling 0/{total_companies}",
-                    data={"total": total_companies, "ats_type": ats_type}
-                )
-            
-            # Crawl each company
-            rate_limiter = RateLimiter()
-            success = 0
-            failed = 0
-            jobs_found = 0
-            
-            for i, (company_id, company_name) in enumerate(companies):
-                # Check for cancellation
+            async with async_session_factory() as db:
+                # Check for cancellation at the start of each batch
                 if run_id and await check_if_cancelled(db, run_id):
                     results["cancelled"] = True
+                    results["batches"] = batch_number - 1
                     break
                 
-                try:
-                    async with async_session_factory() as crawl_db:
-                        engine = CrawlEngine(crawl_db, rate_limiter)
-                        result = await engine.crawl_company(company_id)
-                        
-                        if result.get("status") == "success":
-                            success += 1
-                            company_jobs = result.get("jobs_extracted", 0)
-                            jobs_found += company_jobs
-                        else:
-                            failed += 1
-                except Exception as e:
-                    logger.debug(f"Crawl failed for {company_name}: {e}")
-                    failed += 1
+                # Find companies with this ATS type that need crawling
+                query = await db.execute(text('''
+                    SELECT c.id, c.name
+                    FROM companies c
+                    WHERE c.is_active = true
+                    AND c.ats_type = :ats_type
+                    AND (
+                        c.last_crawled_at IS NULL 
+                        OR c.last_crawled_at < NOW() - INTERVAL '24 hours'
+                    )
+                    ORDER BY c.last_crawled_at NULLS FIRST
+                    LIMIT :limit
+                '''), {"ats_type": ats_type, "limit": effective_batch_size})
+                companies = query.fetchall()
+                batch_count = len(companies)
                 
-                # Update progress
-                self._registry.update_progress(f"crawl_{ats_type}", f"{i+1}/{total_companies}", {
-                    "completed": i + 1,
-                    "jobs_found": jobs_found,
+                # If no companies found, we're done
+                if not companies:
+                    if batch_number == 1:
+                        if run_id:
+                            await log_to_run(
+                                db, run_id, "info", f"No {ats_type} companies to crawl",
+                                current_step="Completed - no companies found"
+                            )
+                        results["batches"] = 0
+                        return results
+                    else:
+                        logger.info(f"No more {ats_type} companies to crawl after {batch_number - 1} batches")
+                        break
+                
+                self._registry.update_progress(f"crawl_{ats_type}", f"Batch {batch_number}: 0/{batch_count}", {
+                    "batch": batch_number,
+                    "batch_total": batch_count,
+                    "completed": 0,
+                    "jobs_found": results["jobs_found"],
+                    "total_crawled": results["companies_crawled"],
                 })
-            
-            results["companies_crawled"] = success
-            results["jobs_found"] = jobs_found
-            results["failed"] = failed
+                
+                if run_id:
+                    await log_to_run(
+                        db, run_id, "info", 
+                        f"Batch {batch_number}: Found {batch_count} {ats_type} companies to crawl (total so far: {results['companies_crawled']})",
+                        current_step=f"Batch {batch_number}: Crawling 0/{batch_count}",
+                        data={"batch": batch_number, "batch_count": batch_count, "ats_type": ats_type, "total_crawled": results["companies_crawled"]}
+                    )
+                
+                batch_success = 0
+                batch_failed = 0
+                batch_jobs = 0
+                
+                for i, (company_id, company_name) in enumerate(companies):
+                    # Check for cancellation
+                    if run_id and await check_if_cancelled(db, run_id):
+                        results["cancelled"] = True
+                        results["companies_crawled"] += batch_success
+                        results["jobs_found"] += batch_jobs
+                        results["failed"] += batch_failed
+                        results["batches"] = batch_number
+                        return results
+                    
+                    try:
+                        async with async_session_factory() as crawl_db:
+                            engine = CrawlEngine(crawl_db, rate_limiter)
+                            result = await engine.crawl_company(company_id)
+                            
+                            if result.get("status") == "success":
+                                batch_success += 1
+                                company_jobs = result.get("jobs_extracted", 0)
+                                batch_jobs += company_jobs
+                            else:
+                                batch_failed += 1
+                    except Exception as e:
+                        logger.debug(f"Crawl failed for {company_name}: {e}")
+                        batch_failed += 1
+                    
+                    # Update progress
+                    self._registry.update_progress(f"crawl_{ats_type}", f"Batch {batch_number}: {i+1}/{batch_count}", {
+                        "batch": batch_number,
+                        "completed": i + 1,
+                        "jobs_found": results["jobs_found"] + batch_jobs,
+                        "total_crawled": results["companies_crawled"] + batch_success,
+                    })
+                
+                # Update totals
+                results["companies_crawled"] += batch_success
+                results["jobs_found"] += batch_jobs
+                results["failed"] += batch_failed
+                results["batches"] = batch_number
+                
+                logger.info(
+                    f"Batch {batch_number} complete for {ats_type}",
+                    batch_success=batch_success,
+                    batch_jobs=batch_jobs,
+                    total_crawled=results["companies_crawled"],
+                    total_jobs=results["jobs_found"],
+                )
+                
+                if run_id:
+                    await log_to_run(
+                        db, run_id, "info",
+                        f"Batch {batch_number} complete: {batch_success} {ats_type} companies, {batch_jobs} jobs. Total: {results['companies_crawled']} companies",
+                        current_step=f"Batch {batch_number} complete",
+                        progress_count=results["companies_crawled"],
+                        data={"batch": batch_number, "batch_success": batch_success, "batch_jobs": batch_jobs}
+                    )
+                
+                # If not continuous mode or we processed fewer than batch_size, we're done
+                if not continuous or batch_count < effective_batch_size:
+                    break
         
         return results
     
@@ -891,7 +1002,7 @@ class PipelineOrchestrator:
                 result = await service.enrich_jobs_batch(
                     ats_type=ats_type,
                     limit=limit,
-                    concurrency=15,
+                    concurrency=10,  # Keep below pool limit (15) to leave room for parent sessions
                 )
                 
                 results["success"] = result.get("success", 0)

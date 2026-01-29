@@ -19,15 +19,15 @@ from app.engines.normalize.skill_extractor import SkillExtractor
 settings = get_settings()
 logger = structlog.get_logger()
 
-# Configure Gemini API
-if settings.google_api_key:
-    genai.configure(api_key=settings.google_api_key)
+# Configure Gemini API (uses dedicated GEMINI_API_KEY for embeddings)
+if settings.gemini_api_key:
+    genai.configure(api_key=settings.gemini_api_key)
 
 
 def get_gemini_embedding(text: str) -> Optional[List[float]]:
     """Get embedding from Google Gemini API."""
-    if not settings.google_api_key:
-        logger.warning("Google API key not set, skipping embedding")
+    if not settings.gemini_api_key:
+        logger.warning("Gemini API key not set, skipping embedding (get one from aistudio.google.com)")
         return None
     
     try:
@@ -45,8 +45,8 @@ def get_gemini_embedding(text: str) -> Optional[List[float]]:
 
 def get_gemini_embeddings_batch(texts: List[str]) -> List[Optional[List[float]]]:
     """Get embeddings for multiple texts from Google Gemini API."""
-    if not settings.google_api_key:
-        logger.warning("Google API key not set, skipping embeddings")
+    if not settings.gemini_api_key:
+        logger.warning("Gemini API key not set, skipping embeddings (get one from aistudio.google.com)")
         return [None] * len(texts)
     
     try:
@@ -363,9 +363,9 @@ async def generate_embeddings_batch(batch_size: int = 100) -> dict:
     """Generate embeddings for jobs that don't have them using Gemini API."""
     from app.db import async_session_factory
     
-    if not settings.google_api_key:
-        logger.warning("Google API key not set, skipping embedding generation")
-        return {"processed": 0, "remaining": 0, "error": "Google API key not set"}
+    if not settings.gemini_api_key:
+        logger.warning("Gemini API key not set, skipping embedding generation (get one from aistudio.google.com)")
+        return {"processed": 0, "remaining": 0, "error": "Gemini API key not set - get one from aistudio.google.com"}
     
     async with async_session_factory() as db:
         # Find jobs without embeddings

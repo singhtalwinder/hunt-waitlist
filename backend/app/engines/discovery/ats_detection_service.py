@@ -92,78 +92,34 @@ async def detect_ats_for_companies(
     include_retries: bool = False,
     max_attempts: int = 3,
     run_id: Optional[UUID] = None,
+    batch_size: int = 500,
+    continuous: bool = True,
 ) -> dict:
     """
     Detect ATS type for companies that are missing it.
     
+    Runs continuously in batches until no more companies are found.
+    
     Args:
         db: Database session
-        limit: Maximum number of companies to process
+        limit: Maximum number of companies to process per batch (deprecated, use batch_size)
         include_retries: If True, also retry companies that failed before (up to max_attempts)
         max_attempts: Maximum number of detection attempts per company
         run_id: Optional pipeline run ID for logging
+        batch_size: Number of companies to process per batch (default 500)
+        continuous: If True, keep running batches until no more companies found
     
     Returns:
         Dict with detection results
     """
-    # Build query based on whether we include retries
-    if include_retries:
-        # Include companies that have been tried but haven't exceeded max attempts
-        query = text('''
-            SELECT id, name, domain, careers_url, website_url, ats_detection_attempts
-            FROM companies
-            WHERE is_active = true
-            AND ats_type IS NULL
-            AND (ats_detection_attempts IS NULL OR ats_detection_attempts < :max_attempts)
-            ORDER BY 
-                COALESCE(ats_detection_attempts, 0) ASC,
-                created_at DESC
-            LIMIT :limit
-        ''')
-        result = await db.execute(query, {"limit": limit, "max_attempts": max_attempts})
-    else:
-        # Only companies never tried
-        query = text('''
-            SELECT id, name, domain, careers_url, website_url, ats_detection_attempts
-            FROM companies
-            WHERE is_active = true
-            AND ats_type IS NULL
-            AND (ats_detection_attempts IS NULL OR ats_detection_attempts = 0)
-            ORDER BY created_at DESC
-            LIMIT :limit
-        ''')
-        result = await db.execute(query, {"limit": limit})
+    # Use batch_size if limit is the old default, otherwise respect explicit limit
+    effective_batch_size = batch_size if limit == 100 else min(limit, batch_size)
     
-    companies = result.fetchall()
-    total_companies = len(companies)
-    
-    if not companies:
-        if run_id:
-            await _log_to_run(
-                db, run_id, "info", "No companies to process",
-                current_step="Completed - no companies found"
-            )
-        return {
-            "processed": 0,
-            "detected": 0,
-            "not_detected": 0,
-            "errors": 0,
-        }
-    
-    logger.info("Starting ATS detection", count=total_companies, include_retries=include_retries)
-    
-    if run_id:
-        await _log_to_run(
-            db, run_id, "info", f"Starting ATS detection for {total_companies} companies",
-            current_step=f"Processing 0/{total_companies}",
-            progress_count=0,
-            progress_total=total_companies,
-        )
-    
-    detected = 0
-    not_detected = 0
-    errors = 0
-    processed = 0
+    total_detected = 0
+    total_not_detected = 0
+    total_errors = 0
+    total_processed = 0
+    batch_number = 0
     
     async with httpx.AsyncClient(
         timeout=15.0,
@@ -172,70 +128,182 @@ async def detect_ats_for_companies(
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         }
     ) as client:
-        for company in companies:
-            # Check for cancellation every iteration
+        while True:
+            batch_number += 1
+            
+            # Check for cancellation at the start of each batch
             if run_id and await _check_if_cancelled(db, run_id):
                 logger.info("ATS detection cancelled by user")
                 await _log_to_run(
                     db, run_id, "warn", "Cancelled by user",
                     current_step="Cancelled",
-                    progress_count=detected,
+                    progress_count=total_detected,
                 )
                 return {
-                    "processed": processed,
-                    "detected": detected,
-                    "not_detected": not_detected,
-                    "errors": errors,
+                    "processed": total_processed,
+                    "detected": total_detected,
+                    "not_detected": total_not_detected,
+                    "errors": total_errors,
+                    "batches": batch_number - 1,
                     "cancelled": True,
                 }
             
-            processed += 1
-            company_id = company.id
-            name = company.name
-            domain = company.domain
-            careers_url = company.careers_url
-            website_url = company.website_url
+            # Build query based on whether we include retries
+            if include_retries:
+                # Include companies that have been tried but haven't exceeded max attempts
+                query = text('''
+                    SELECT id, name, domain, careers_url, website_url, ats_detection_attempts
+                    FROM companies
+                    WHERE is_active = true
+                    AND ats_type IS NULL
+                    AND (ats_detection_attempts IS NULL OR ats_detection_attempts < :max_attempts)
+                    ORDER BY 
+                        COALESCE(ats_detection_attempts, 0) ASC,
+                        created_at DESC
+                    LIMIT :limit
+                ''')
+                result = await db.execute(query, {"limit": effective_batch_size, "max_attempts": max_attempts})
+            else:
+                # Only companies never tried
+                query = text('''
+                    SELECT id, name, domain, careers_url, website_url, ats_detection_attempts
+                    FROM companies
+                    WHERE is_active = true
+                    AND ats_type IS NULL
+                    AND (ats_detection_attempts IS NULL OR ats_detection_attempts = 0)
+                    ORDER BY created_at DESC
+                    LIMIT :limit
+                ''')
+                result = await db.execute(query, {"limit": effective_batch_size})
             
-            try:
-                ats_type, ats_identifier = await _detect_ats_for_company(
-                    client, domain, careers_url, website_url
-                )
-                
-                # Update the company
-                now = datetime.now(timezone.utc)
-                
-                if ats_type:
-                    await db.execute(
-                        text('''
-                            UPDATE companies
-                            SET ats_type = :ats_type,
-                                ats_identifier = :ats_identifier,
-                                careers_url = COALESCE(careers_url, :careers_url),
-                                ats_detection_attempts = COALESCE(ats_detection_attempts, 0) + 1,
-                                ats_detection_last_at = :now
-                            WHERE id = :id
-                        '''),
-                        {
-                            "id": company_id,
-                            "ats_type": ats_type,
-                            "ats_identifier": ats_identifier,
-                            "careers_url": careers_url,
-                            "now": now,
-                        }
-                    )
-                    detected += 1
-                    logger.info("ATS detected", company=name, ats_type=ats_type, identifier=ats_identifier)
-                    
-                    # Log successful detection
+            companies = result.fetchall()
+            batch_count = len(companies)
+            
+            # If no companies found, we're done
+            if not companies:
+                if batch_number == 1:
+                    # First batch with no companies
                     if run_id:
                         await _log_to_run(
-                            db, run_id, "info", 
-                            f"✓ Detected: {name} - {ats_type}" + (f" ({ats_identifier})" if ats_identifier else ""),
-                            data={"company": name, "domain": domain, "ats_type": ats_type, "ats_identifier": ats_identifier},
-                            current_step=f"Processing {processed}/{total_companies}",
-                            progress_count=detected,
+                            db, run_id, "info", "No companies to process",
+                            current_step="Completed - no companies found"
                         )
+                    return {
+                        "processed": 0,
+                        "detected": 0,
+                        "not_detected": 0,
+                        "errors": 0,
+                        "batches": 0,
+                    }
                 else:
+                    # No more companies after previous batches
+                    logger.info(f"No more companies to process after {batch_number - 1} batches")
+                    break
+            
+            logger.info(f"Starting ATS detection batch {batch_number}", count=batch_count, include_retries=include_retries)
+            
+            if run_id:
+                await _log_to_run(
+                    db, run_id, "info", 
+                    f"Batch {batch_number}: Processing {batch_count} companies (total so far: {total_processed})",
+                    current_step=f"Batch {batch_number}: 0/{batch_count}",
+                    progress_count=total_detected,
+                )
+            
+            batch_detected = 0
+            batch_not_detected = 0
+            batch_errors = 0
+            batch_processed = 0
+            
+            for company in companies:
+                # Check for cancellation every iteration
+                if run_id and await _check_if_cancelled(db, run_id):
+                    logger.info("ATS detection cancelled by user")
+                    await _log_to_run(
+                        db, run_id, "warn", "Cancelled by user",
+                        current_step="Cancelled",
+                        progress_count=total_detected + batch_detected,
+                    )
+                    return {
+                        "processed": total_processed + batch_processed,
+                        "detected": total_detected + batch_detected,
+                        "not_detected": total_not_detected + batch_not_detected,
+                        "errors": total_errors + batch_errors,
+                        "batches": batch_number,
+                        "cancelled": True,
+                    }
+                
+                batch_processed += 1
+                company_id = company.id
+                name = company.name
+                domain = company.domain
+                careers_url = company.careers_url
+                website_url = company.website_url
+                
+                try:
+                    ats_type, ats_identifier = await _detect_ats_for_company(
+                        client, domain, careers_url, website_url
+                    )
+                    
+                    # Update the company
+                    now = datetime.now(timezone.utc)
+                    
+                    if ats_type:
+                        await db.execute(
+                            text('''
+                                UPDATE companies
+                                SET ats_type = :ats_type,
+                                    ats_identifier = :ats_identifier,
+                                    careers_url = COALESCE(careers_url, :careers_url),
+                                    ats_detection_attempts = COALESCE(ats_detection_attempts, 0) + 1,
+                                    ats_detection_last_at = :now
+                                WHERE id = :id
+                            '''),
+                            {
+                                "id": company_id,
+                                "ats_type": ats_type,
+                                "ats_identifier": ats_identifier,
+                                "careers_url": careers_url,
+                                "now": now,
+                            }
+                        )
+                        batch_detected += 1
+                        logger.info("ATS detected", company=name, ats_type=ats_type, identifier=ats_identifier)
+                        
+                        # Log successful detection
+                        if run_id:
+                            await _log_to_run(
+                                db, run_id, "info", 
+                                f"✓ Detected: {name} - {ats_type}" + (f" ({ats_identifier})" if ats_identifier else ""),
+                                data={"company": name, "domain": domain, "ats_type": ats_type, "ats_identifier": ats_identifier},
+                                current_step=f"Batch {batch_number}: {batch_processed}/{batch_count}",
+                                progress_count=total_detected + batch_detected,
+                            )
+                    else:
+                        await db.execute(
+                            text('''
+                                UPDATE companies
+                                SET ats_detection_attempts = COALESCE(ats_detection_attempts, 0) + 1,
+                                    ats_detection_last_at = :now
+                                WHERE id = :id
+                            '''),
+                            {"id": company_id, "now": now}
+                        )
+                        batch_not_detected += 1
+                        logger.debug("No ATS detected", company=name)
+                        
+                except Exception as e:
+                    batch_errors += 1
+                    logger.warning("ATS detection error", company=name, error=str(e))
+                    
+                    # Log error
+                    if run_id:
+                        await _log_to_run(
+                            db, run_id, "warn", f"Error: {name} - {str(e)[:100]}",
+                            data={"company": name, "error": str(e)[:200]}
+                        )
+                    
+                    # Still increment attempt count
                     await db.execute(
                         text('''
                             UPDATE companies
@@ -243,67 +311,73 @@ async def detect_ats_for_companies(
                                 ats_detection_last_at = :now
                             WHERE id = :id
                         '''),
-                        {"id": company_id, "now": now}
+                        {"id": company_id, "now": datetime.now(timezone.utc)}
                     )
-                    not_detected += 1
-                    logger.debug("No ATS detected", company=name)
-                    
-            except Exception as e:
-                errors += 1
-                logger.warning("ATS detection error", company=name, error=str(e))
                 
-                # Log error
-                if run_id:
+                # Log progress every 50 companies within a batch
+                if run_id and batch_processed % 50 == 0:
                     await _log_to_run(
-                        db, run_id, "warn", f"Error: {name} - {str(e)[:100]}",
-                        data={"company": name, "error": str(e)[:200]}
+                        db, run_id, "info", 
+                        f"Batch {batch_number} progress: {batch_processed}/{batch_count} ({batch_detected} detected)",
+                        current_step=f"Batch {batch_number}: {batch_processed}/{batch_count}",
+                        progress_count=total_detected + batch_detected,
                     )
-                
-                # Still increment attempt count
-                await db.execute(
-                    text('''
-                        UPDATE companies
-                        SET ats_detection_attempts = COALESCE(ats_detection_attempts, 0) + 1,
-                            ats_detection_last_at = :now
-                        WHERE id = :id
-                    '''),
-                    {"id": company_id, "now": datetime.now(timezone.utc)}
-                )
             
-            # Log progress every 10 companies
-            if run_id and processed % 10 == 0:
+            await db.commit()
+            
+            # Update totals
+            total_processed += batch_processed
+            total_detected += batch_detected
+            total_not_detected += batch_not_detected
+            total_errors += batch_errors
+            
+            logger.info(
+                f"Batch {batch_number} complete",
+                batch_processed=batch_processed,
+                batch_detected=batch_detected,
+                total_processed=total_processed,
+                total_detected=total_detected,
+            )
+            
+            # Log batch completion
+            if run_id:
                 await _log_to_run(
                     db, run_id, "info", 
-                    f"Progress: {processed}/{total_companies} ({detected} detected, {not_detected} not detected)",
-                    current_step=f"Processing {processed}/{total_companies}",
-                    progress_count=detected,
+                    f"Batch {batch_number} complete: {batch_detected} detected, {batch_not_detected} not detected. Total: {total_detected} detected",
+                    data={"batch": batch_number, "batch_detected": batch_detected, "total_detected": total_detected},
+                    current_step=f"Batch {batch_number} complete",
+                    progress_count=total_detected,
                 )
-    
-    await db.commit()
+            
+            # If not continuous mode or we processed fewer than batch_size, we're done
+            if not continuous or batch_count < effective_batch_size:
+                break
     
     logger.info(
         "ATS detection complete",
-        processed=total_companies,
-        detected=detected,
-        not_detected=not_detected,
-        errors=errors,
+        total_batches=batch_number,
+        processed=total_processed,
+        detected=total_detected,
+        not_detected=total_not_detected,
+        errors=total_errors,
     )
     
     # Log completion
     if run_id:
         await _log_to_run(
             db, run_id, "info", 
-            f"Completed: {detected} detected, {not_detected} not detected, {errors} errors",
-            data={"detected": detected, "not_detected": not_detected, "errors": errors, "processed": total_companies},
+            f"Completed: {total_detected} detected, {total_not_detected} not detected, {total_errors} errors in {batch_number} batches",
+            data={"detected": total_detected, "not_detected": total_not_detected, "errors": total_errors, "processed": total_processed, "batches": batch_number},
             current_step="Completed",
-            progress_count=detected,
+            progress_count=total_detected,
         )
     
     return {
-        "processed": total_companies,
-        "detected": detected,
-        "not_detected": not_detected,
-        "errors": errors,
+        "processed": total_processed,
+        "detected": total_detected,
+        "not_detected": total_not_detected,
+        "errors": total_errors,
+        "batches": batch_number,
     }
 
 

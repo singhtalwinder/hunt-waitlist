@@ -95,6 +95,12 @@ class Settings(BaseSettings):
         default="",
         description="Google Custom Search Engine ID",
     )
+    
+    # Google Gemini API (optional - for embeddings)
+    gemini_api_key: str = Field(
+        default="",
+        description="Google Gemini API key for embeddings (get from aistudio.google.com)",
+    )
 
     @property
     def is_production(self) -> bool:

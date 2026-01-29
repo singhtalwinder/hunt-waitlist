@@ -10,9 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import update, func
 
 from app.api import router as api_router
 from app.config import get_settings
+from app.db.session import async_session_factory
+from app.db.models import DiscoveryRun, VerificationRun, MaintenanceRun
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -31,11 +34,67 @@ if settings.sentry_dsn:
     )
 
 
+async def cleanup_orphaned_runs():
+    """Mark any 'running' runs as failed on startup.
+    
+    When the server restarts (deploy, crash, etc.), any runs that were
+    in progress are now orphaned since the process handling them is gone.
+    """
+    async with async_session_factory() as session:
+        # Cleanup orphaned discovery runs
+        result = await session.execute(
+            update(DiscoveryRun)
+            .where(DiscoveryRun.status == "running")
+            .values(
+                status="failed",
+                error_message="Interrupted by server restart",
+                completed_at=func.now(),
+            )
+        )
+        discovery_count = result.rowcount
+        
+        # Cleanup orphaned verification runs
+        result = await session.execute(
+            update(VerificationRun)
+            .where(VerificationRun.status == "running")
+            .values(
+                status="failed",
+                error_message="Interrupted by server restart",
+                completed_at=func.now(),
+            )
+        )
+        verification_count = result.rowcount
+        
+        # Cleanup orphaned maintenance runs
+        result = await session.execute(
+            update(MaintenanceRun)
+            .where(MaintenanceRun.status == "running")
+            .values(
+                status="failed",
+                error_message="Interrupted by server restart",
+                completed_at=func.now(),
+            )
+        )
+        maintenance_count = result.rowcount
+        
+        await session.commit()
+        
+        total = discovery_count + verification_count + maintenance_count
+        if total > 0:
+            logger.info(
+                "Cleaned up orphaned runs",
+                discovery=discovery_count,
+                verification=verification_count,
+                maintenance=maintenance_count,
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("Starting Hunt API", environment=settings.environment)
+    await cleanup_orphaned_runs()
     yield
     # Shutdown
     logger.info("Shutting down Hunt API")

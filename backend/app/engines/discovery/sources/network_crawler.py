@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Company
@@ -306,17 +306,20 @@ class NetworkCrawlerSource(DiscoverySource):
         
         This is called after asyncio.gather() completes to avoid
         concurrent access to the AsyncSession (which is not task-safe).
+        
+        Uses bulk UPDATE to avoid fetching ORM objects with lazy-loaded
+        relationships, which can cause greenlet context issues.
         """
         from datetime import datetime
         
         try:
-            for company_id in company_ids:
-                result = await self.db.execute(
-                    select(Company).where(Company.id == company_id)
-                )
-                comp = result.scalar_one_or_none()
-                if comp:
-                    comp.last_crawled_for_network = datetime.utcnow()
+            # Use bulk UPDATE instead of fetching ORM objects to avoid
+            # greenlet/lazy-loading issues with relationships
+            await self.db.execute(
+                update(Company)
+                .where(Company.id.in_(company_ids))
+                .values(last_crawled_for_network=datetime.utcnow())
+            )
             # Don't commit here - let the orchestrator handle commits
         except Exception as e:
             logger.debug(f"[network_crawler] Error updating crawl timestamps: {e}")
