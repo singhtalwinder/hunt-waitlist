@@ -373,3 +373,68 @@ class JobEnrichmentService:
         
         logger.info(f"Enrichment complete", **results)
         return results
+
+
+async def enrich_jobs_without_descriptions(
+    limit: int = 50,
+    company_id: Optional[str] = None,
+    ats_type: Optional[str] = None,
+) -> int:
+    """Enrich jobs that are missing descriptions.
+    
+    This is the main entry point for the enrichment task.
+    
+    Args:
+        limit: Maximum number of jobs to enrich
+        company_id: Optional - only enrich jobs from this company
+        ats_type: Optional - only enrich jobs from companies with this ATS type
+        
+    Returns:
+        Number of jobs successfully enriched
+    """
+    from app.db import async_session_factory
+    
+    async with async_session_factory() as db:
+        # Build query for jobs needing enrichment
+        query = (
+            select(Job, Company)
+            .join(Company, Job.company_id == Company.id)
+            .where(Job.description.is_(None) | (Job.description == ""))
+        )
+        
+        if company_id:
+            query = query.where(Job.company_id == UUID(company_id))
+        
+        if ats_type:
+            query = query.where(Company.ats_type == ats_type)
+        
+        query = query.limit(limit)
+        
+        result = await db.execute(query)
+        jobs_to_enrich = result.fetchall()
+        
+        if not jobs_to_enrich:
+            logger.info("No jobs to enrich")
+            return 0
+        
+        logger.info(f"Found {len(jobs_to_enrich)} jobs to enrich")
+        
+        enriched_count = 0
+        service = JobEnrichmentService(db)
+        
+        try:
+            for job, company in jobs_to_enrich:
+                try:
+                    success = await service.enrich_job(job, company)
+                    if success:
+                        enriched_count += 1
+                        # Commit each successful enrichment
+                        await db.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to enrich job {job.id}: {e}")
+                    await db.rollback()
+        finally:
+            await service.close()
+        
+        logger.info(f"Enriched {enriched_count}/{len(jobs_to_enrich)} jobs")
+        return enriched_count
