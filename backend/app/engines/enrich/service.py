@@ -88,6 +88,13 @@ class JobEnrichmentService:
         
         try:
             resp = await client.get(api_url)
+            if resp.status_code == 404:
+                # Job no longer exists on ATS - mark as delisted
+                logger.debug(f"Greenhouse API 404 for {api_url} - marking job as delisted")
+                job.is_active = False
+                job.delisted_at = datetime.utcnow()
+                job.delist_reason = "removed_from_ats"
+                return True  # Return True so we commit the delist
             if resp.status_code != 200:
                 logger.debug(f"Greenhouse API {resp.status_code} for {api_url}")
                 return False
@@ -126,6 +133,13 @@ class JobEnrichmentService:
         
         try:
             resp = await client.get(job.source_url)
+            if resp.status_code == 404:
+                # Job no longer exists - mark as delisted
+                logger.debug(f"Lever 404 for {job.source_url} - marking job as delisted")
+                job.is_active = False
+                job.delisted_at = datetime.utcnow()
+                job.delist_reason = "removed_from_ats"
+                return True
             if resp.status_code != 200:
                 return False
             
@@ -229,6 +243,13 @@ class JobEnrichmentService:
             api_url = f"https://apply.workable.com/api/v2/accounts/{company.ats_identifier}/jobs/{shortcode}"
             
             resp = await client.get(api_url)
+            if resp.status_code == 404:
+                # Job no longer exists - mark as delisted
+                logger.debug(f"Workable API 404 for {api_url} - marking job as delisted")
+                job.is_active = False
+                job.delisted_at = datetime.utcnow()
+                job.delist_reason = "removed_from_ats"
+                return True
             if resp.status_code != 200:
                 logger.debug(f"Workable API {resp.status_code} for {api_url}")
                 return False
@@ -263,6 +284,13 @@ class JobEnrichmentService:
         
         try:
             resp = await client.get(job.source_url)
+            if resp.status_code == 404:
+                # Job page no longer exists - mark as delisted
+                logger.debug(f"Generic 404 for {job.source_url} - marking job as delisted")
+                job.is_active = False
+                job.delisted_at = datetime.utcnow()
+                job.delist_reason = "removed_from_ats"
+                return True
             if resp.status_code != 200:
                 return False
             
@@ -348,6 +376,7 @@ class JobEnrichmentService:
                     select(Job, Company)
                     .join(Company, Job.company_id == Company.id)
                     .where(Job.description.is_(None) | (Job.description == ""))
+                    .where(Job.is_active == True)
                 )
                 
                 if ats_type:
