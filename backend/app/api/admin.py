@@ -1711,7 +1711,7 @@ async def discover_from_companies(
 async def run_ats_detection(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    limit: int = Query(100, ge=1, le=500, description="Max companies to process"),
+    limit: int = Query(500, ge=1, le=10000, description="Max companies to process per batch (runs continuously)"),
     include_retries: bool = Query(False, description="Include companies we tried before"),
 ):
     """Detect ATS type for companies missing it."""
@@ -1913,7 +1913,7 @@ async def run_crawl_only(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     ats_type: Optional[str] = Query(None, description="Specific ATS type to crawl (allows concurrent crawls of different ATS)"),
-    limit: int = Query(100, ge=1, le=500, description="Max companies to crawl"),
+    limit: int = Query(500, ge=1, le=10000, description="Max companies to crawl per batch (runs continuously)"),
     cascade: bool = Query(False, description="Also run enrich and embeddings after"),
 ):
     """Run the crawl stage, optionally followed by enrich and embeddings.
