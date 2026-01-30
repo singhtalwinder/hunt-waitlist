@@ -127,7 +127,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
 
         <button
           onClick={goToNextStep}
-          className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors"
+          className="w-full bg-primary hover:bg-orange-600 text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors"
         >
           Continue
           <ArrowRight className="w-5 h-5" />
@@ -159,7 +159,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
             <select
               value={field}
               onChange={(e) => setField(e.target.value)}
-              className="w-full pl-4 pr-10 py-3 rounded-lg border border-gray-200 bg-white text-black focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all appearance-none cursor-pointer"
+              className="w-full pl-4 pr-10 py-3 rounded-lg border border-gray-200 bg-white text-black focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all appearance-none cursor-pointer"
             >
               <option value="">Select your field...</option>
               {TECH_FIELDS.map((f) => (
@@ -188,7 +188,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
             <select
               value={seniority}
               onChange={(e) => setSeniority(e.target.value)}
-              className="w-full pl-4 pr-10 py-3 rounded-lg border border-gray-200 bg-white text-black focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all appearance-none cursor-pointer"
+              className="w-full pl-4 pr-10 py-3 rounded-lg border border-gray-200 bg-white text-black focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all appearance-none cursor-pointer"
             >
               <option value="">Select your level...</option>
               {SENIORITY_LEVELS.map((level) => (
@@ -221,7 +221,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
               onChange={(e) => setExpectedPay(e.target.value)}
               placeholder="e.g. 120000"
               min="0"
-              className="w-full pl-8 pr-4 py-3 rounded-lg border border-gray-200 bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
+              className="w-full pl-8 pr-4 py-3 rounded-lg border border-gray-200 bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
             />
           </div>
         </div>
@@ -240,7 +240,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
             <select
               value={country}
               onChange={(e) => setCountry(e.target.value)}
-              className="w-full pl-4 pr-10 py-3 rounded-lg border border-gray-200 bg-white text-black focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all appearance-none cursor-pointer"
+              className="w-full pl-4 pr-10 py-3 rounded-lg border border-gray-200 bg-white text-black focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all appearance-none cursor-pointer"
             >
               <option value="">Select your country...</option>
               {COUNTRIES.map((c) => (
@@ -273,7 +273,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
                 onClick={() => toggleWorkType(type.id)}
                 className={`px-4 py-2 rounded-lg border-2 font-medium transition-all ${
                   workType.includes(type.id)
-                    ? 'border-[#FF4500] bg-[#FF4500] text-white'
+                    ? 'border-[#FF4500] bg-primary text-white'
                     : 'border-gray-200 bg-white text-black hover:border-gray-300'
                 }`}
               >
@@ -301,7 +301,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
                 onClick={() => toggleRoleType(type.id)}
                 className={`px-4 py-2 rounded-lg border-2 font-medium transition-all ${
                   roleType.includes(type.id)
-                    ? 'border-[#FF4500] bg-[#FF4500] text-white'
+                    ? 'border-[#FF4500] bg-primary text-white'
                     : 'border-gray-200 bg-white text-black hover:border-gray-300'
                 }`}
               >
@@ -318,7 +318,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
           <button
             onClick={handleSubmit}
             disabled={isLoading}
-            className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-primary hover:bg-orange-600 text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -332,7 +332,7 @@ export function AdditionalInfo({ waitlistId, onComplete, onProgress }: Additiona
         ) : (
           <button
             onClick={goToNextStep}
-            className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors"
+            className="w-full bg-primary hover:bg-orange-600 text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-colors"
           >
             Continue
             <ArrowRight className="w-5 h-5" />

@@ -23,10 +23,9 @@ export default function JobsPage() {
           <div className="flex items-center gap-2">
             <Logo size={28} />
             <span
-              className="text-xl font-bold text-black"
-              style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
+              className="text-xl font-bold text-black font-hunt"
             >
-              hunt<span className="text-[#FF4500]">.</span>
+              hunt<span className="text-primary">.</span>
             </span>
           </div>
 
@@ -40,7 +39,7 @@ export default function JobsPage() {
             </a>
             <a
               href="/jobs"
-              className="flex items-center gap-2 text-[#FF4500] font-medium"
+              className="flex items-center gap-2 text-primary font-medium"
             >
               <Bell className="w-4 h-4" />
               <span>All Jobs</span>
@@ -69,7 +68,7 @@ export default function JobsPage() {
             ) : (
               <a
                 href="/"
-                className="text-[#FF4500] hover:underline text-sm font-medium"
+                className="text-primary hover:underline text-sm font-medium"
               >
                 Sign up
               </a>

@@ -92,7 +92,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#FF4500]" />
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     )
   }
@@ -107,7 +107,7 @@ export default function SettingsPage() {
           </p>
           <a
             href="/"
-            className="inline-block bg-[#FF4500] hover:bg-[#E63E00] text-white font-medium px-6 py-3 rounded-lg transition-colors"
+            className="inline-block bg-primary hover:bg-orange-600 text-white font-medium px-6 py-3 rounded-lg transition-colors"
           >
             Get Started
           </a>
@@ -124,10 +124,9 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2">
             <Logo size={28} />
             <span
-              className="text-xl font-bold text-black"
-              style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
+              className="text-xl font-bold text-black font-hunt"
             >
-              hunt<span className="text-[#FF4500]">.</span>
+              hunt<span className="text-primary">.</span>
             </span>
           </div>
 
@@ -148,7 +147,7 @@ export default function SettingsPage() {
             </a>
             <a
               href="/settings"
-              className="flex items-center gap-2 text-[#FF4500] font-medium"
+              className="flex items-center gap-2 text-primary font-medium"
             >
               <Settings className="w-4 h-4" />
               <span>Settings</span>
@@ -201,7 +200,7 @@ export default function SettingsPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               placeholder="Your name"
             />
           </div>
@@ -218,7 +217,7 @@ export default function SettingsPage() {
                   onClick={() => toggleRoleFamily(key)}
                   className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                     roleFamilies.includes(key)
-                      ? 'bg-[#FF4500] text-white border-[#FF4500]'
+                      ? 'bg-primary text-white border-primary'
                       : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
                   }`}
                 >
@@ -236,7 +235,7 @@ export default function SettingsPage() {
             <select
               value={seniority}
               onChange={(e) => setSeniority(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
             >
               <option value="">Select level</option>
               {Object.entries(SENIORITY_LABELS).map(([key, label]) => (
@@ -256,7 +255,7 @@ export default function SettingsPage() {
               type="number"
               value={minSalary}
               onChange={(e) => setMinSalary(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               placeholder="e.g., 150000"
             />
           </div>
@@ -273,7 +272,7 @@ export default function SettingsPage() {
                   onClick={() => toggleLocationType(key)}
                   className={`px-4 py-2 rounded-lg text-sm border transition-colors ${
                     locationTypes.includes(key)
-                      ? 'bg-[#FF4500] text-white border-[#FF4500]'
+                      ? 'bg-primary text-white border-primary'
                       : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
                   }`}
                 >
@@ -292,7 +291,7 @@ export default function SettingsPage() {
               type="text"
               value={skills}
               onChange={(e) => setSkills(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               placeholder="e.g., React, TypeScript, Node.js"
             />
             <p className="text-sm text-gray-500 mt-1">
@@ -305,7 +304,7 @@ export default function SettingsPage() {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              className="w-full bg-primary hover:bg-orange-600 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {saving ? (
                 <Loader2 className="w-5 h-5 animate-spin" />

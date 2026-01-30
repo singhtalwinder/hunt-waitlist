@@ -1711,10 +1711,10 @@ async def discover_from_companies(
 async def run_ats_detection(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    limit: int = Query(500, ge=1, le=10000, description="Max companies to process per batch (runs continuously)"),
+    batch_size: int = Query(50, ge=1, le=500, description="Companies per batch (smaller = more reliable)"),
     include_retries: bool = Query(False, description="Include companies we tried before"),
 ):
-    """Detect ATS type for companies missing it."""
+    """Detect ATS type for companies missing it. Runs continuously until all are processed."""
     from app.engines.discovery.ats_detection_service import detect_ats_for_companies
     from app.engines.pipeline.orchestrator import operation_registry
     
@@ -1745,9 +1745,10 @@ async def run_ats_detection(
             async with async_session_factory() as session:
                 result = await detect_ats_for_companies(
                     session,
-                    limit=limit,
+                    batch_size=batch_size,
                     include_retries=include_retries,
-                    run_id=run_id,  # Pass run_id for logging
+                    run_id=run_id,
+                    continuous=True,  # Keep running until all companies processed
                 )
                 
                 # Update pipeline run with final status (only if not cancelled)
@@ -1783,7 +1784,7 @@ async def run_ats_detection(
     
     background_tasks.add_task(run_in_background)
     
-    msg = f"Detecting ATS for up to {limit} companies"
+    msg = f"Detecting ATS continuously (batch size: {batch_size})"
     if include_retries:
         msg += " (including retries)"
     return {"status": "started", "message": msg, "run_id": str(run_id) if run_id else None, "operation_type": "detect_ats"}

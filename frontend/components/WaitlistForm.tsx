@@ -48,7 +48,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   return (
     <div className="p-6 md:p-6 lg:p-6">
       <div className="text-center mb-6 md:mb-5 lg:mb-6">
-        <h1 className="text-3xl md:text-xl lg:text-3xl font-bold text-black leading-tight tracking-tight mb-3 md:mb-2 lg:mb-3">
+        <h1 className="text-3xl md:text-xl lg:text-3xl font-bold text-black font-hunt leading-tight tracking-tight mb-3 md:mb-2 lg:mb-3">
           Get early access to hunt
         </h1>
         <p className="text-base md:text-xs lg:text-sm text-gray-600">
@@ -63,7 +63,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
           onChange={(e) => setName(e.target.value)}
           placeholder="Tell us your name..."
           required
-          className="w-full px-4 py-3.5 md:py-2.5 lg:py-3 rounded-lg border border-gray-200 bg-white text-black text-base md:text-sm lg:text-base placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
+          className="w-full px-4 py-3.5 md:py-2.5 lg:py-3 rounded-lg border border-gray-200 bg-white text-black text-base md:text-sm lg:text-base placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
         />
         <input
           type="email"
@@ -71,7 +71,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Enter your email address..."
           required
-          className="w-full px-4 py-3.5 md:py-2.5 lg:py-3 rounded-lg border border-gray-200 bg-white text-black text-base md:text-sm lg:text-base placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent transition-all"
+          className="w-full px-4 py-3.5 md:py-2.5 lg:py-3 rounded-lg border border-gray-200 bg-white text-black text-base md:text-sm lg:text-base placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
         />
 
         {error && (
@@ -81,7 +81,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold py-3.5 md:py-2.5 lg:py-3 px-6 rounded-lg flex items-center justify-center gap-2 text-base md:text-sm lg:text-base transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-primary hover:bg-orange-600 text-white font-semibold py-3.5 md:py-2.5 lg:py-3 px-6 rounded-lg flex items-center justify-center gap-2 text-base md:text-sm lg:text-base transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? (
             <Loader2 className="w-5 h-5 animate-spin" />
@@ -96,9 +96,9 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
 
       <p className="text-center text-sm md:text-xs lg:text-sm text-gray-500 mt-5 md:mt-5 lg:mt-6">
         By clicking "Get early access," you agree to our{' '}
-        <a href="#" className="text-[#FF4500] hover:underline">Privacy Policy</a>
+        <a href="#" className="text-primary hover:underline">Privacy Policy</a>
         {' '}and{' '}
-        <a href="#" className="text-[#FF4500] hover:underline">Terms of Use</a>
+        <a href="#" className="text-primary hover:underline">Terms of Use</a>
       </p>
     </div>
   )

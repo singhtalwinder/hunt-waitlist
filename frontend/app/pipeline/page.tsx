@@ -220,7 +220,7 @@ function StageCard({
   return (
     <div className={`bg-white rounded-xl border transition-all ${
       isCurrentStage 
-        ? 'border-[#FF4500] ring-2 ring-[#FF4500]/20' 
+        ? 'border-primary ring-2 ring-primary/20' 
         : 'border-gray-200 hover:border-gray-300'
     }`}>
       {/* Header */}
@@ -237,7 +237,7 @@ function StageCard({
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold text-gray-900">{stage.name}</h3>
                 {isCurrentStage && (
-                  <span className="flex items-center gap-1 text-xs font-medium text-[#FF4500] bg-orange-50 px-2 py-0.5 rounded-full">
+                  <span className="flex items-center gap-1 text-xs font-medium text-primary bg-orange-50 px-2 py-0.5 rounded-full">
                     <Activity className="w-3 h-3 animate-pulse" />
                     Running{concurrentCount > 1 ? ` (${concurrentCount})` : ''}
                   </span>
@@ -264,7 +264,7 @@ function StageCard({
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 isRunning || isCurrentStage
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-[#FF4500] hover:bg-[#E63E00] text-white'
+                  : 'bg-primary hover:bg-orange-600 text-white'
               }`}
             >
               {isRunning || isCurrentStage ? (
@@ -293,7 +293,7 @@ function StageCard({
             <div className="w-full bg-gray-100 rounded-full h-2">
               <div 
                 className={`h-2 rounded-full transition-all ${
-                  isCurrentStage ? 'bg-[#FF4500] animate-pulse' : stage.bgColor.replace('bg-', 'bg-').replace('-50', '-500')
+                  isCurrentStage ? 'bg-primary animate-pulse' : stage.bgColor.replace('bg-', 'bg-').replace('-50', '-500')
                 }`}
                 style={{ width: `${Math.min(percentage, 100)}%` }}
               />
@@ -312,7 +312,7 @@ function StageCard({
               {stageOps.map((op, i) => (
                 <div key={`op-${i}`} className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
+                    <div className="flex items-center gap-2 text-sm font-medium text-primary">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span className="font-semibold">{op.operation_type}</span>
                       {op.current_step && <span className="text-orange-600">- {op.current_step}</span>}
@@ -346,7 +346,7 @@ function StageCard({
               {stageRuns.map((run, i) => (
                 <div key={`run-${i}`} className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
+                    <div className="flex items-center gap-2 text-sm font-medium text-primary">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span className="font-semibold">{run.stage}</span>
                       {run.current_step && <span className="text-orange-600">- {run.current_step}</span>}
@@ -400,7 +400,7 @@ function StageCard({
               {/* Fallback to old orchestrator progress if no specific ops/runs */}
               {stageOps.length === 0 && stageRuns.length === 0 && progress && (
                 <div className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
-                  <div className="flex items-center gap-2 text-sm font-medium text-[#FF4500]">
+                  <div className="flex items-center gap-2 text-sm font-medium text-primary">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     {status?.pipeline?.current_step || 'Running...'}
                   </div>
@@ -569,7 +569,7 @@ export default function PipelinePage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-[#FF4500] mx-auto mb-4" />
+          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
           <p className="text-gray-600">Loading pipeline status...</p>
         </div>
       </div>
@@ -584,10 +584,9 @@ export default function PipelinePage() {
           <div className="flex items-center gap-2">
             <Logo size={28} />
             <span
-              className="text-xl font-bold text-black"
-              style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
+              className="text-xl font-bold text-black font-hunt"
             >
-              hunt<span className="text-[#FF4500]">.</span>
+              hunt<span className="text-primary">.</span>
             </span>
             <span className="ml-3 text-sm font-medium text-gray-500">Pipeline</span>
           </div>
@@ -668,7 +667,7 @@ export default function PipelinePage() {
               className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium transition-colors ${
                 runningOps['full_pipeline'] !== undefined || runningStage !== null
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-[#FF4500] hover:bg-[#E63E00] text-white'
+                  : 'bg-primary hover:bg-orange-600 text-white'
               }`}
             >
               {runningStage || runningOps['full_pipeline'] ? (
@@ -682,7 +681,7 @@ export default function PipelinePage() {
           
           {/* Status banner when running - shows all concurrent operations */}
           {isRunning && (
-            <div className="bg-gradient-to-r from-orange-500 to-[#FF4500] text-white rounded-xl p-4 mb-6">
+            <div className="bg-gradient-to-r from-orange-500 to-primary text-white rounded-xl p-4 mb-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
@@ -749,7 +748,7 @@ export default function PipelinePage() {
                   <div 
                     className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${
                       isActive 
-                        ? 'bg-[#FF4500] text-white' 
+                        ? 'bg-primary text-white' 
                         : 'bg-gray-100 text-gray-600'
                     }`}
                   >

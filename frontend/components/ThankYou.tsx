@@ -50,7 +50,7 @@ export function ThankYou() {
 
       <button
         onClick={handleShare}
-        className="inline-flex items-center gap-2 px-6 py-3 bg-[#FF4500] hover:bg-[#E63E00] text-white font-semibold rounded-lg transition-colors"
+        className="inline-flex items-center gap-2 px-6 py-3 bg-primary hover:bg-orange-600 text-white font-semibold rounded-lg transition-colors"
       >
         {copied ? (
           <>

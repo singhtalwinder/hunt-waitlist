@@ -538,7 +538,13 @@ class PipelineOrchestrator:
         from app.engines.enrich.service import JobEnrichmentService
         
         results = {"success": 0, "failed": 0, "cancelled": False}
-        ats_types = ["greenhouse", "ashby", "workable"]
+        # All standard ATS types that can be enriched via API or generic HTML parsing
+        # Note: "custom" is handled separately via Playwright in custom_crawler
+        ats_types = [
+            "greenhouse", "lever", "ashby", "workable", 
+            "bamboohr", "recruitee", "smartrecruiters", "jobvite",
+            "icims", "workday"
+        ]
         
         async with async_session_factory() as db:
             if run_id:

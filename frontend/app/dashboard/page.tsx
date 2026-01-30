@@ -61,7 +61,7 @@ function StatCard({
   color?: 'orange' | 'blue' | 'green' | 'red' | 'purple'
 }) {
   const colorClasses = {
-    orange: 'bg-orange-50 text-[#FF4500]',
+    orange: 'bg-orange-50 text-primary',
     blue: 'bg-blue-50 text-blue-600',
     green: 'bg-green-50 text-green-600',
     red: 'bg-red-50 text-red-600',
@@ -143,7 +143,7 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-[#FF4500] mx-auto mb-4" />
+          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
           <p className="text-gray-600">Loading analytics...</p>
         </div>
       </div>
@@ -161,7 +161,7 @@ export default function DashboardPage() {
           <p className="text-gray-600 mb-6">{error}</p>
           <button
             onClick={loadAnalytics}
-            className="inline-block bg-[#FF4500] hover:bg-[#E63E00] text-white font-medium px-6 py-3 rounded-lg transition-colors"
+            className="inline-block bg-primary hover:bg-orange-600 text-white font-medium px-6 py-3 rounded-lg transition-colors"
           >
             Try Again
           </button>
@@ -194,10 +194,9 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2">
             <Logo size={28} />
             <span
-              className="text-xl font-bold text-black"
-              style={{ fontFamily: "'Zalando Sans Expanded', sans-serif" }}
+              className="text-xl font-bold text-black font-hunt"
             >
-              hunt<span className="text-[#FF4500]">.</span>
+              hunt<span className="text-primary">.</span>
             </span>
             <span className="ml-3 text-sm font-medium text-gray-500">Analytics</span>
           </div>
@@ -207,7 +206,7 @@ export default function DashboardPage() {
             <select
               value={days}
               onChange={(e) => setDays(Number(e.target.value))}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:border-transparent"
+              className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
             >
               <option value={7}>Last 7 days</option>
               <option value={14}>Last 14 days</option>

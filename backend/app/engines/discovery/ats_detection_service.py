@@ -88,11 +88,10 @@ async def _log_to_run(
 
 async def detect_ats_for_companies(
     db: AsyncSession,
-    limit: int = 100,
+    batch_size: int = 50,
     include_retries: bool = False,
     max_attempts: int = 3,
     run_id: Optional[UUID] = None,
-    batch_size: int = 500,
     continuous: bool = True,
 ) -> dict:
     """
@@ -102,18 +101,16 @@ async def detect_ats_for_companies(
     
     Args:
         db: Database session
-        limit: Maximum number of companies to process per batch (deprecated, use batch_size)
+        batch_size: Number of companies to process per batch (default 50, smaller = more reliable)
         include_retries: If True, also retry companies that failed before (up to max_attempts)
         max_attempts: Maximum number of detection attempts per company
         run_id: Optional pipeline run ID for logging
-        batch_size: Number of companies to process per batch (default 500)
         continuous: If True, keep running batches until no more companies found
     
     Returns:
         Dict with detection results
     """
-    # Use batch_size if limit is the old default, otherwise respect explicit limit
-    effective_batch_size = batch_size if limit == 100 else min(limit, batch_size)
+    effective_batch_size = batch_size
     
     total_detected = 0
     total_not_detected = 0
@@ -245,7 +242,7 @@ async def detect_ats_for_companies(
                         client, domain, careers_url, website_url
                     )
                     
-                    # Update the company
+                    # Update the company - commit immediately to prevent timeout
                     now = datetime.now(timezone.utc)
                     
                     if ats_type:
@@ -267,6 +264,7 @@ async def detect_ats_for_companies(
                                 "now": now,
                             }
                         )
+                        await db.commit()  # Commit immediately after each update
                         batch_detected += 1
                         logger.info("ATS detected", company=name, ats_type=ats_type, identifier=ats_identifier)
                         
@@ -289,12 +287,19 @@ async def detect_ats_for_companies(
                             '''),
                             {"id": company_id, "now": now}
                         )
+                        await db.commit()  # Commit immediately after each update
                         batch_not_detected += 1
                         logger.debug("No ATS detected", company=name)
                         
                 except Exception as e:
                     batch_errors += 1
                     logger.warning("ATS detection error", company=name, error=str(e))
+                    
+                    # Rollback any pending transaction before continuing
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
                     
                     # Log error
                     if run_id:
@@ -303,27 +308,29 @@ async def detect_ats_for_companies(
                             data={"company": name, "error": str(e)[:200]}
                         )
                     
-                    # Still increment attempt count
-                    await db.execute(
-                        text('''
-                            UPDATE companies
-                            SET ats_detection_attempts = COALESCE(ats_detection_attempts, 0) + 1,
-                                ats_detection_last_at = :now
-                            WHERE id = :id
-                        '''),
-                        {"id": company_id, "now": datetime.now(timezone.utc)}
-                    )
+                    # Still increment attempt count in a fresh transaction
+                    try:
+                        await db.execute(
+                            text('''
+                                UPDATE companies
+                                SET ats_detection_attempts = COALESCE(ats_detection_attempts, 0) + 1,
+                                    ats_detection_last_at = :now
+                                WHERE id = :id
+                            '''),
+                            {"id": company_id, "now": datetime.now(timezone.utc)}
+                        )
+                        await db.commit()
+                    except Exception:
+                        pass  # Don't let this block other companies
                 
-                # Log progress every 50 companies within a batch
-                if run_id and batch_processed % 50 == 0:
+                # Log progress every 10 companies within a batch
+                if run_id and batch_processed % 10 == 0:
                     await _log_to_run(
                         db, run_id, "info", 
                         f"Batch {batch_number} progress: {batch_processed}/{batch_count} ({batch_detected} detected)",
                         current_step=f"Batch {batch_number}: {batch_processed}/{batch_count}",
                         progress_count=total_detected + batch_detected,
                     )
-            
-            await db.commit()
             
             # Update totals
             total_processed += batch_processed

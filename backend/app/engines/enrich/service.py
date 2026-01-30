@@ -176,28 +176,74 @@ class JobEnrichmentService:
         self, job: Job, company: Company, client: httpx.AsyncClient
     ) -> bool:
         """Enrich from Ashby job API."""
-        # Ashby job URLs can contain the job ID
         if not job.source_url:
             return False
         
-        # Try to get job details from Ashby API
-        # First, try the job board API with job listing endpoint
+        # Extract job ID from URL - Ashby URLs are like:
+        # https://jobs.ashbyhq.com/company/abc123-uuid-here
+        job_id = None
+        match = re.search(r'jobs\.ashbyhq\.com/[^/]+/([a-f0-9-]+)', job.source_url)
+        if match:
+            job_id = match.group(1)
+        
+        if not job_id:
+            logger.debug(f"No job ID found in Ashby URL: {job.source_url}")
+            return False
+        
         try:
-            # Get all jobs and find matching one
+            # Try the individual job endpoint first (faster than fetching all jobs)
+            job_api_url = f"https://api.ashbyhq.com/posting-api/job-board/{company.ats_identifier}/posting/{job_id}"
+            resp = await client.get(job_api_url)
+            
+            if resp.status_code == 200:
+                jd = resp.json()
+                desc = jd.get("descriptionHtml") or jd.get("description", "")
+                if desc:
+                    plain_text = re.sub(r'<[^>]+>', ' ', desc)
+                    plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+                    job.description = plain_text[:10000]
+                
+                posted = jd.get("publishedAt") or jd.get("createdAt")
+                if posted:
+                    try:
+                        job.posted_at = datetime.fromisoformat(posted.replace("Z", "+00:00"))
+                    except:
+                        pass
+                
+                return bool(job.description)
+            
+            if resp.status_code == 404:
+                # Job no longer exists - mark as delisted
+                logger.debug(f"Ashby API 404 for job {job_id} - marking as delisted")
+                job.is_active = False
+                job.delisted_at = datetime.utcnow()
+                job.delist_reason = "removed_from_ats"
+                return True
+            
+            # Fallback: try fetching all jobs if individual endpoint failed
+            # But limit search time with early exit
             api_url = f"https://api.ashbyhq.com/posting-api/job-board/{company.ats_identifier}"
             resp = await client.get(api_url)
             
+            if resp.status_code == 404:
+                # Company job board no longer exists
+                logger.debug(f"Ashby job board not found for {company.ats_identifier}")
+                job.is_active = False
+                job.delisted_at = datetime.utcnow()
+                job.delist_reason = "removed_from_ats"
+                return True
+            
             if resp.status_code != 200:
+                logger.debug(f"Ashby API {resp.status_code} for {api_url}")
                 return False
             
             data = resp.json()
             jobs_data = data.get("jobs", [])
             
-            # Find matching job by URL
+            # Find matching job by ID (much faster than URL matching)
             for jd in jobs_data:
-                job_url = jd.get("jobUrl") or jd.get("applyUrl", "")
-                if job_url and job_url in job.source_url or job.source_url in job_url:
-                    # Found matching job
+                jd_id = jd.get("id", "")
+                if jd_id and jd_id == job_id:
                     desc = jd.get("descriptionHtml") or jd.get("description", "")
                     if desc:
                         plain_text = re.sub(r'<[^>]+>', ' ', desc)
@@ -213,10 +259,18 @@ class JobEnrichmentService:
                     
                     return bool(job.description)
             
-            return False
+            # Job ID not found in listing - likely delisted
+            logger.debug(f"Ashby job {job_id} not found in listing - marking as delisted")
+            job.is_active = False
+            job.delisted_at = datetime.utcnow()
+            job.delist_reason = "removed_from_ats"
+            return True
             
+        except asyncio.TimeoutError:
+            logger.warning(f"Ashby enrichment timeout for job {job_id}")
+            return False
         except Exception as e:
-            logger.debug(f"Ashby enrichment failed: {e}")
+            logger.debug(f"Ashby enrichment failed for job {job_id}: {e}")
             return False
 
     async def _enrich_workable(

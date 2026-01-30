@@ -18,6 +18,19 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter);
+  --font-hunt: "Zalando Sans Expanded", sans-serif;
+  --color-primary: #FF4500;
+  
+  @keyframes bounce-horizontal {
+    0%, 100% {
+      transform: translateX(0);
+      animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+    }
+    50% {
+      transform: translateX(25%);
+      animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+    }
+  }
 }
 
 body {
@@ -61,4 +74,9 @@ input[type="number"] {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #a1a1a1;
+}
+
+/* Custom Utilities */
+.animate-bounce-horizontal {
+  animation: bounce-horizontal 1s infinite;
 }
