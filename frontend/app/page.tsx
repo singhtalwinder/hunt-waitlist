@@ -218,10 +218,12 @@ export default function Home() {
 
           {/* Hero Text */}
           <div className="text-center max-w-4xl mx-auto">
-            <h1 className="font-hunt text-4xl md:text-5xl lg:text-7xl font-bold text-black leading-tight tracking-tight">
-              The Job Platform That
-              <br />
-              Works for Candidates
+            <h1 className="font-hunt text-3xl md:text-4xl lg:text-5xl font-bold text-black leading-tight tracking-tight">
+              <span className="whitespace-nowrap">The Job Platform</span>{' '}
+              <span className="whitespace-nowrap">That Works</span>
+              <br className="hidden md:block" />
+              <span className="md:hidden"> </span>
+              <span className="whitespace-nowrap">for Candidates</span>
             </h1>
             
             <p className="mt-6 md:mt-8 text-lg text-gray-600 max-w-2xl mx-auto leading-relaxed">
@@ -229,8 +231,8 @@ export default function Home() {
             </p>
 
             {/* Waitlist Form */}
-            <form id="waitlist-form" onSubmit={handleSubmit} className="mt-8 md:mt-10 max-w-md mx-auto space-y-3">
-              <div className="flex flex-col sm:flex-row gap-3">
+            <form id="waitlist-form" onSubmit={handleSubmit} className="mt-8 md:mt-10 max-w-xs mx-auto space-y-3">
+              <div className="flex flex-col gap-3">
                 <input
                   type="text"
                   value={name}
@@ -256,7 +258,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full sm:w-auto px-8 py-3.5 bg-primary text-white rounded-full font-semibold hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mx-auto"
+                className="w-full px-8 py-3.5 bg-primary text-white rounded-full font-semibold hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
