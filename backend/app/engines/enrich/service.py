@@ -456,6 +456,7 @@ class JobEnrichmentService:
                     .join(Company, Job.company_id == Company.id)
                     .where(Job.description.is_(None) | (Job.description == ""))
                     .where(Job.is_active == True)
+                    .where(Company.ats_identifier.isnot(None))  # Skip companies without ATS identifier
                 )
                 
                 if ats_type:
