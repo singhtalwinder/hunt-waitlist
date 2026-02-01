@@ -150,18 +150,34 @@ class JobEnrichmentService:
             
             html = resp.text
             
-            # Extract description from the posting body
-            # Lever uses specific div classes for job content
+            # Try JSON-LD structured data first (current Lever format)
+            # Look for "description" : "..." in the JSON-LD script
             desc_match = re.search(
-                r'<div[^>]*class="[^"]*posting-description[^"]*"[^>]*>(.*?)</div>',
-                html, re.DOTALL | re.IGNORECASE
+                r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"|"description"\s*:\s*"([^"]*(?:<[^>]+>[^"]*)*)"',
+                html, re.DOTALL
             )
             if desc_match:
-                content = desc_match.group(1)
+                content = desc_match.group(1) or desc_match.group(2) or ""
+                # Unescape JSON string
+                content = content.replace('\\"', '"').replace('\\n', ' ').replace('\\t', ' ')
+                # Strip HTML tags
                 plain_text = re.sub(r'<[^>]+>', ' ', content)
                 plain_text = re.sub(r'\s+', ' ', plain_text).strip()
                 if len(plain_text) > 50:
                     job.description = plain_text[:10000]
+            
+            # Fallback: try old posting-description class
+            if not job.description:
+                old_desc_match = re.search(
+                    r'<div[^>]*class="[^"]*posting-description[^"]*"[^>]*>(.*?)</div>',
+                    html, re.DOTALL | re.IGNORECASE
+                )
+                if old_desc_match:
+                    content = old_desc_match.group(1)
+                    plain_text = re.sub(r'<[^>]+>', ' ', content)
+                    plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+                    if len(plain_text) > 50:
+                        job.description = plain_text[:10000]
             
             # Look for posted date in meta tags or structured data
             date_match = re.search(r'"datePosted"\s*:\s*"([^"]+)"', html)
