@@ -34,18 +34,24 @@ class JobEnrichmentService:
         """Fetch and update job description and posted_at from source."""
         try:
             client = await self._get_client()
+            success = False
             
-            # Route to appropriate enrichment method
+            # Try ATS-specific enrichment first
             if company.ats_type == "greenhouse":
-                return await self._enrich_greenhouse(job, company, client)
+                success = await self._enrich_greenhouse(job, company, client)
             elif company.ats_type == "lever":
-                return await self._enrich_lever(job, company, client)
+                success = await self._enrich_lever(job, company, client)
             elif company.ats_type == "ashby":
-                return await self._enrich_ashby(job, company, client)
+                success = await self._enrich_ashby(job, company, client)
             elif company.ats_type == "workable":
-                return await self._enrich_workable(job, company, client)
-            else:
-                return await self._enrich_generic(job, client)
+                success = await self._enrich_workable(job, company, client)
+            
+            # Fallback to generic enrichment if specific method failed
+            # (but not if job was delisted - that's a valid outcome)
+            if not success and job.is_active and not job.description:
+                success = await self._enrich_generic(job, client)
+            
+            return success
                 
         except Exception as e:
             logger.debug(f"Failed to enrich job {job.id}: {e}")
@@ -493,7 +499,6 @@ class JobEnrichmentService:
                     .join(Company, Job.company_id == Company.id)
                     .where(Job.description.is_(None) | (Job.description == ""))
                     .where(Job.is_active == True)
-                    .where(Company.ats_identifier.isnot(None))  # Skip companies without ATS identifier
                 )
                 
                 if ats_type:
