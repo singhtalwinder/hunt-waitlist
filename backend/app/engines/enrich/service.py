@@ -380,23 +380,44 @@ class JobEnrichmentService:
             
             html = resp.text
             
-            # Try to find job description in common patterns
-            patterns = [
-                r'<div[^>]*class="[^"]*job-description[^"]*"[^>]*>(.*?)</div>',
-                r'<div[^>]*class="[^"]*description[^"]*"[^>]*>(.*?)</div>',
-                r'<article[^>]*>(.*?)</article>',
-                r'"description"\s*:\s*"([^"]+)"',
-            ]
+            # Try JSON-LD structured data first (most reliable)
+            # Match "description" : "..." allowing for HTML content
+            json_desc_match = re.search(
+                r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"|"description"\s*:\s*"([^"]*(?:<[^>]+>[^"]*)*)"',
+                html, re.DOTALL
+            )
+            if json_desc_match:
+                content = json_desc_match.group(1) or json_desc_match.group(2) or ""
+                # Decode HTML entities and unescape JSON
+                import html as html_module
+                content = html_module.unescape(content)
+                content = content.replace('\\"', '"').replace('\\n', ' ').replace('\\t', ' ')
+                # Strip HTML tags
+                plain_text = re.sub(r'<[^>]+>', ' ', content)
+                plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+                if len(plain_text) > 100:
+                    job.description = plain_text[:10000]
             
-            for pattern in patterns:
-                match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
-                if match:
-                    content = match.group(1)
-                    plain_text = re.sub(r'<[^>]+>', ' ', content)
-                    plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                    if len(plain_text) > 100:
-                        job.description = plain_text[:10000]
-                        break
+            # Fallback: Try HTML element patterns
+            if not job.description:
+                html_patterns = [
+                    r'<div[^>]*class="[^"]*job-description[^"]*"[^>]*>(.*?)</div>',
+                    r'<div[^>]*class="[^"]*jobDescription[^"]*"[^>]*>(.*?)</div>',
+                    r'<div[^>]*class="[^"]*posting-description[^"]*"[^>]*>(.*?)</div>',
+                    r'<div[^>]*class="[^"]*description[^"]*"[^>]*>(.*?)</div>',
+                    r'<section[^>]*class="[^"]*description[^"]*"[^>]*>(.*?)</section>',
+                    r'<article[^>]*>(.*?)</article>',
+                ]
+                
+                for pattern in html_patterns:
+                    match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
+                    if match:
+                        content = match.group(1)
+                        plain_text = re.sub(r'<[^>]+>', ' ', content)
+                        plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+                        if len(plain_text) > 100:
+                            job.description = plain_text[:10000]
+                            break
             
             # Try to find posted date
             date_patterns = [
