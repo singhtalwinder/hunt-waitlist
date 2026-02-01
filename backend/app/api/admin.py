@@ -1374,12 +1374,12 @@ async def list_running_operations():
 @router.get("/pipeline/stats")
 async def get_pipeline_stats(db: AsyncSession = Depends(get_db)):
     """Get pipeline statistics for the admin UI."""
-    # Companies ready to crawl (have ATS type but never crawled)
+    # Companies ready to crawl (have ATS type but never successfully crawled)
     ready_to_crawl_result = await db.execute(text('''
         SELECT COUNT(*) FROM companies 
         WHERE is_active = true 
         AND ats_type IS NOT NULL 
-        AND (crawl_attempts IS NULL OR crawl_attempts = 0)
+        AND last_crawled_at IS NULL
     '''))
     companies_ready_to_crawl = ready_to_crawl_result.scalar() or 0
     
