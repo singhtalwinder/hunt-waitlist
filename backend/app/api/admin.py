@@ -2683,9 +2683,20 @@ async def run_supported_ats_pipeline(
         finally:
             operation_registry.stop("supported_ats_pipeline")
     
-    # Use asyncio.create_task instead of background_tasks for more reliable async execution
+    # Use asyncio.create_task with fire_and_forget pattern
     import asyncio
-    asyncio.create_task(run_in_background())
+    
+    async def fire_and_forget():
+        try:
+            await run_in_background()
+        except Exception as e:
+            import structlog
+            logger = structlog.get_logger()
+            logger.error("One-click pipeline background task failed", error=str(e), exc_info=True)
+    
+    task = asyncio.create_task(fire_and_forget())
+    # Prevent garbage collection
+    task.add_done_callback(lambda t: None)
     
     return {
         "status": "started",
