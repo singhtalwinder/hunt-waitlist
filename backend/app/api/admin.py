@@ -2558,6 +2558,10 @@ async def run_supported_ats_pipeline(
     )
     
     async def run_in_background():
+        import structlog
+        logger = structlog.get_logger()
+        logger.info("One-click pipeline background task starting", run_id=str(run_id))
+        
         from app.db.session import async_session_factory
         
         operation_registry.start("supported_ats_pipeline")
@@ -2567,6 +2571,7 @@ async def run_supported_ats_pipeline(
         total_embed_failed = 0
         
         try:
+            logger.info("One-click pipeline phase 1 starting")
             # Phase 1: Enrich all supported ATS types
             async with async_session_factory() as session:
                 await log_to_run(
@@ -2666,6 +2671,7 @@ async def run_supported_ats_pipeline(
                 )
                 
         except Exception as e:
+            logger.error("One-click pipeline failed", error=str(e), exc_info=True)
             async with async_session_factory() as session:
                 await complete_pipeline_run(
                     session,
