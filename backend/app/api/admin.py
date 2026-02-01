@@ -2516,6 +2516,27 @@ async def get_supported_ats_info(db: AsyncSession = Depends(get_db)):
             "percent_enriched": round(100 * row[2] / row[1], 1) if row[1] > 0 else 0,
         })
     
+    # Get companies ready to crawl (have ATS but never crawled) for supported types
+    result = await db.execute(text(f'''
+        SELECT 
+            ats_type,
+            COUNT(*) as ready_to_crawl
+        FROM companies
+        WHERE ats_type IN ({supported_str})
+          AND ats_type IS NOT NULL
+          AND last_crawled_at IS NULL
+        GROUP BY ats_type
+    '''))
+    crawl_ready_by_ats = {row[0]: row[1] for row in result.fetchall()}
+    
+    # Add crawl stats to by_ats
+    for ats in by_ats:
+        ats["ready_to_crawl"] = crawl_ready_by_ats.get(ats["ats_type"], 0)
+    
+    # Get total ready to crawl for supported types
+    total_ready_to_crawl = sum(crawl_ready_by_ats.values())
+    stats["supported"]["ready_to_crawl"] = total_ready_to_crawl
+    
     return {
         "supported_ats_types": supported,
         "stats": stats,
@@ -2527,13 +2548,18 @@ async def get_supported_ats_info(db: AsyncSession = Depends(get_db)):
 async def run_supported_ats_pipeline(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    crawl_limit: Optional[int] = Query(100, ge=1, description="Max companies to crawl per ATS (default 100)"),
     enrich_limit: Optional[int] = Query(None, ge=1, description="Max jobs to enrich per ATS (None = no limit)"),
     cascade: bool = Query(True, description="Also run embeddings after enrichment"),
 ):
     """One-click pipeline for supported ATS types.
     
-    Runs the full pipeline (enrich -> embeddings) for all supported ATS types:
+    Runs the full pipeline (crawl -> enrich -> embeddings) for all supported ATS types:
     - greenhouse, lever, ashby, workable, jobvite, workday
+    
+    Phase 1: Crawl - Find new jobs from companies with detected ATS that haven't been crawled
+    Phase 2: Enrich - Get descriptions for jobs missing them
+    Phase 3: Embeddings - Generate vectors for enriched jobs
     
     These ATS types have reliable API/scraping and typically achieve >95% success rate.
     """
@@ -2560,17 +2586,49 @@ async def run_supported_ats_pipeline(
         from app.db.session import async_session_factory
         
         await operation_registry.start_operation("supported_ats_pipeline")
+        total_crawled = 0
         total_enriched = 0
         total_failed = 0
         
         try:
-            # Phase 1: Enrich each supported ATS type using orchestrator
+            # Phase 1: Crawl each supported ATS type (find new jobs)
             async with async_session_factory() as session:
                 await log_to_run(
                     session, run_id, "info",
-                    f"Phase 1: Enriching {len(supported)} ATS types",
-                    current_step="Phase 1: Enrichment",
-                    data={"ats_types": supported}
+                    f"Phase 1: Crawling {len(supported)} ATS types (finding new jobs)",
+                    current_step="Phase 1: Crawl",
+                    data={"ats_types": supported, "limit_per_ats": crawl_limit}
+                )
+            
+            for idx, ats_type in enumerate(supported, 1):
+                async with async_session_factory() as session:
+                    await log_to_run(
+                        session, run_id, "info",
+                        f"Crawling {ats_type} ({idx}/{len(supported)})",
+                        current_step=f"Crawling {ats_type} ({idx}/{len(supported)})"
+                    )
+                
+                crawl_result = await orchestrator.run_crawl_standalone(
+                    ats_type=ats_type,
+                    limit=crawl_limit,
+                    run_id=run_id,
+                )
+                jobs_found = crawl_result.get("jobs_found", 0)
+                total_crawled += jobs_found
+                
+                async with async_session_factory() as session:
+                    await log_to_run(
+                        session, run_id, "info",
+                        f"Crawled {ats_type}: {jobs_found} jobs found",
+                        data={"ats_type": ats_type, **crawl_result}
+                    )
+            
+            # Phase 2: Enrich each supported ATS type
+            async with async_session_factory() as session:
+                await log_to_run(
+                    session, run_id, "info",
+                    f"Phase 2: Enriching {len(supported)} ATS types (crawled {total_crawled} new jobs)",
+                    current_step="Phase 2: Enrichment"
                 )
             
             for idx, ats_type in enumerate(supported, 1):
@@ -2582,14 +2640,14 @@ async def run_supported_ats_pipeline(
                 total_enriched += result.get("success", 0)
                 total_failed += result.get("failed", 0)
             
-            # Phase 2: Embeddings (if cascade)
+            # Phase 3: Embeddings (if cascade)
             total_embedded = 0
             if cascade:
                 async with async_session_factory() as session:
                     await log_to_run(
                         session, run_id, "info",
-                        f"Phase 2: Generating embeddings",
-                        current_step="Phase 2: Embeddings"
+                        f"Phase 3: Generating embeddings",
+                        current_step="Phase 3: Embeddings"
                     )
                 
                 embed_result = await orchestrator._run_embeddings(run_id=run_id)
@@ -2599,13 +2657,13 @@ async def run_supported_ats_pipeline(
             async with async_session_factory() as session:
                 await complete_pipeline_run(
                     session, run_id,
-                    processed=total_enriched + total_embedded,
+                    processed=total_crawled + total_enriched + total_embedded,
                     failed=total_failed,
                     status="completed"
                 )
                 await log_to_run(
                     session, run_id, "info",
-                    f"Complete: {total_enriched} enriched, {total_embedded} embedded, {total_failed} failed"
+                    f"Complete: {total_crawled} crawled, {total_enriched} enriched, {total_embedded} embedded, {total_failed} failed"
                 )
                 
         except Exception as e:
