@@ -2683,7 +2683,9 @@ async def run_supported_ats_pipeline(
         finally:
             operation_registry.stop("supported_ats_pipeline")
     
-    background_tasks.add_task(run_in_background)
+    # Use asyncio.create_task instead of background_tasks for more reliable async execution
+    import asyncio
+    asyncio.create_task(run_in_background())
     
     return {
         "status": "started",
