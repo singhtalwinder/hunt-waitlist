@@ -66,6 +66,11 @@ class Company(Base):
     ats_detection_attempts: Mapped[int] = mapped_column(Integer, default=0)
     ats_detection_last_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     
+    # Parent company relationship (for subsidiaries/brands that use parent's ATS)
+    parent_company_id: Mapped[Optional[UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL")
+    )
+    
     # Maintenance tracking
     last_maintenance_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     
@@ -194,6 +199,9 @@ class Job(Base):
     delist_reason: Mapped[Optional[str]] = mapped_column(
         String(100)
     )  # removed_from_ats, company_inactive, page_not_found
+    
+    # Enrichment tracking - prevents infinite retries on permanently failing jobs
+    enrich_failed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     company: Mapped["Company"] = relationship(back_populates="jobs")

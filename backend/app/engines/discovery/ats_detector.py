@@ -120,6 +120,34 @@ ATS_PATTERNS = {
         r"jobs\.smartrecruiters\.com/([^/]+)",
         r"([^.]+)\.smartrecruiters\.com",
     ],
+    "rippling": [
+        r"ats\.rippling\.com/([^/]+)",
+        r"([^.]+)\.rippling\.com/jobs",
+    ],
+    "scalis": [
+        r"([^.]+)\.scalis\.ai/jobs",
+        r"scalis\.ai/([^/]+)",
+    ],
+    "paylocity": [
+        r"recruiting\.paylocity\.com/recruiting/jobs/([^/]+)",
+        r"([^.]+)\.paylocity\.com",
+    ],
+    "breezy": [
+        r"([^.]+)\.breezy\.hr",
+        r"breezy\.hr/p/([^/]+)",
+    ],
+    "personio": [
+        r"([^.]+)\.jobs\.personio\.de",
+        r"([^.]+)\.jobs\.personio\.com",
+    ],
+    "teamtailor": [
+        r"([^.]+)\.teamtailor\.com",
+        r"career\.([^.]+)\.com",  # Some use custom domains with teamtailor
+    ],
+    "wellfound": [
+        r"wellfound\.com/company/([^/]+)",
+        r"angel\.co/company/([^/]+)",  # Legacy AngelList
+    ],
 }
 
 # HTML patterns for ATS detection
@@ -223,6 +251,34 @@ HTML_PATTERNS = {
     ],
     "smartrecruiters": [
         r"smartrecruiters",
+    ],
+    "rippling": [
+        r"rippling\.com",
+        r"ats\.rippling",
+    ],
+    "scalis": [
+        r"scalis\.ai",
+        r"scalis-careers",
+    ],
+    "paylocity": [
+        r"paylocity",
+        r"recruiting\.paylocity",
+    ],
+    "breezy": [
+        r"breezy\.hr",
+        r"breezyhr",
+    ],
+    "personio": [
+        r"personio",
+        r"jobs\.personio",
+    ],
+    "teamtailor": [
+        r"teamtailor",
+        r"career-page",
+    ],
+    "wellfound": [
+        r"wellfound\.com",
+        r"angel\.co",
     ],
 }
 
@@ -457,6 +513,15 @@ def _is_valid_careers_url_for_domain(careers_url: str, company_domain: str) -> b
         "jobvite.com",
         "icims.com",
         "smartrecruiters.com",
+        "rippling.com",
+        "scalis.ai",
+        "paylocity.com",
+        "breezy.hr",
+        "personio.de",
+        "personio.com",
+        "teamtailor.com",
+        "wellfound.com",
+        "angel.co",
     ]
     
     for ats_domain in ats_domains:

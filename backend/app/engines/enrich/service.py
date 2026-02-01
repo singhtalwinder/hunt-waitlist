@@ -461,6 +461,9 @@ class JobEnrichmentService:
         Processes jobs in batches and keeps checking for new jobs until none remain.
         This ensures jobs added during processing are also picked up.
         
+        Failed jobs are marked with enrich_failed_at in the database to avoid
+        infinite retries. This persists across machine restarts unlike in-memory tracking.
+        
         Args:
             ats_type: Optional ATS type filter
             limit: Optional total limit (None = no limit, process all)
@@ -473,7 +476,23 @@ class JobEnrichmentService:
         
         results = {"success": 0, "failed": 0, "batches": 0, "cancelled": False}
         total_processed = 0
-        attempted_job_ids: set = set()  # Track attempted jobs to avoid infinite retries
+        
+        # Track start time to skip jobs that failed during THIS run
+        # Jobs that failed in previous runs (before this run started) can be retried
+        run_start_time = datetime.utcnow()
+        
+        # Check once if enrich_failed_at column exists (for graceful migration)
+        async with async_session_factory() as db:
+            col_check = await db.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'jobs' AND column_name = 'enrich_failed_at'"
+            ))
+            has_enrich_failed_col = col_check.fetchone() is not None
+        
+        if has_enrich_failed_col:
+            logger.info("Using enrich_failed_at tracking to skip failed jobs")
+        else:
+            logger.info("enrich_failed_at column not found - will process all jobs without descriptions")
         
         while True:
             # Check for cancellation
@@ -495,24 +514,52 @@ class JobEnrichmentService:
             
             # Fetch next batch of jobs needing enrichment
             async with async_session_factory() as db:
-                query = (
-                    select(Job, Company)
-                    .join(Company, Job.company_id == Company.id)
-                    .where(Job.description.is_(None) | (Job.description == ""))
-                    .where(Job.is_active == True)
-                )
+                # Use raw SQL for flexibility - handles case where enrich_failed_at column
+                # might not exist yet (graceful migration)
+                ats_filter = "AND c.ats_type = :ats_type" if ats_type else ""
                 
+                if has_enrich_failed_col:
+                    # Use the enrich_failed_at filter to skip recently failed jobs
+                    sql = text(f'''
+                        SELECT j.id as job_id, c.id as company_id
+                        FROM jobs j
+                        JOIN companies c ON j.company_id = c.id
+                        WHERE (j.description IS NULL OR j.description = '')
+                        AND j.is_active = true
+                        AND (j.enrich_failed_at IS NULL OR j.enrich_failed_at < :run_start_time)
+                        {ats_filter}
+                        ORDER BY j.created_at DESC
+                        LIMIT :limit
+                    ''')
+                else:
+                    # Fallback: column doesn't exist yet, just get jobs without descriptions
+                    sql = text(f'''
+                        SELECT j.id as job_id, c.id as company_id
+                        FROM jobs j
+                        JOIN companies c ON j.company_id = c.id
+                        WHERE (j.description IS NULL OR j.description = '')
+                        AND j.is_active = true
+                        {ats_filter}
+                        ORDER BY j.created_at DESC
+                        LIMIT :limit
+                    ''')
+                
+                params = {"limit": fetch_limit, "run_start_time": run_start_time}
                 if ats_type:
-                    query = query.where(Company.ats_type == ats_type)
+                    params["ats_type"] = ats_type
                 
-                # Exclude already-attempted jobs to avoid infinite retries
-                if attempted_job_ids:
-                    query = query.where(Job.id.notin_(attempted_job_ids))
+                result = await db.execute(sql, params)
+                job_company_ids = result.fetchall()
                 
-                query = query.limit(fetch_limit)
-                
-                result = await db.execute(query)
-                jobs_to_enrich = result.fetchall()
+                # Fetch full Job and Company objects
+                jobs_to_enrich = []
+                for row in job_company_ids:
+                    job_result = await db.execute(select(Job).where(Job.id == row.job_id))
+                    job = job_result.scalar_one_or_none()
+                    company_result = await db.execute(select(Company).where(Company.id == row.company_id))
+                    company = company_result.scalar_one_or_none()
+                    if job and company:
+                        jobs_to_enrich.append((job, company))
             
             # No more jobs to enrich - we're done
             if not jobs_to_enrich:
@@ -568,20 +615,49 @@ class JobEnrichmentService:
                         try:
                             success = await service.enrich_job(job_in_session, company)
                             if success:
+                                # Clear any previous failure marker on success (if column exists)
+                                if has_enrich_failed_col:
+                                    try:
+                                        await db.execute(
+                                            text("UPDATE jobs SET enrich_failed_at = NULL WHERE id = :job_id"),
+                                            {"job_id": job_in_session.id}
+                                        )
+                                    except Exception:
+                                        pass  # Column might not exist
                                 await db.commit()
                                 batch_success += 1
                             else:
+                                # Mark as failed so we don't retry in this run (if column exists)
+                                if has_enrich_failed_col:
+                                    try:
+                                        await db.execute(
+                                            text("UPDATE jobs SET enrich_failed_at = :ts WHERE id = :job_id"),
+                                            {"job_id": job_in_session.id, "ts": datetime.utcnow()}
+                                        )
+                                        await db.commit()
+                                    except Exception:
+                                        pass  # Column might not exist
                                 batch_failed += 1
+                            batch_processed += 1
+                        except Exception as e:
+                            logger.debug(f"Enrichment error for job {job.id}: {e}")
+                            # Mark as failed on exception too (if column exists)
+                            if has_enrich_failed_col:
+                                try:
+                                    await db.execute(
+                                        text("UPDATE jobs SET enrich_failed_at = :ts WHERE id = :job_id"),
+                                        {"job_id": job_in_session.id, "ts": datetime.utcnow()}
+                                    )
+                                    await db.commit()
+                                except Exception:
+                                    pass  # Best effort
+                            batch_failed += 1
                             batch_processed += 1
                         finally:
                             await service.close()
             
             tasks = [enrich_with_semaphore(job, company) for job, company in jobs_to_enrich]
             await asyncio.gather(*tasks)
-            
-            # Track all attempted jobs to avoid retrying them
-            for job, _ in jobs_to_enrich:
-                attempted_job_ids.add(job.id)
             
             results["success"] += batch_success
             results["failed"] += batch_failed

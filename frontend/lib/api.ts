@@ -209,6 +209,11 @@ export interface SourceBreakdown {
   value: number;
 }
 
+export interface FreshnessBreakdown {
+  name: string;
+  value: number;
+}
+
 export interface AnalyticsData {
   crawls_per_day: TimeSeriesPoint[];
   new_companies_per_day: TimeSeriesPoint[];
@@ -216,6 +221,7 @@ export interface AnalyticsData {
   delisted_jobs_per_day: TimeSeriesPoint[];
   companies_with_new_jobs_per_day: TimeSeriesPoint[];
   sources: SourceBreakdown[];
+  job_freshness: FreshnessBreakdown[];
   totals: {
     total_companies: number;
     total_jobs: number;

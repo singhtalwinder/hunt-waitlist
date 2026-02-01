@@ -488,6 +488,49 @@ export default function DashboardPage() {
               </PieChart>
             </ResponsiveContainer>
           </ChartCard>
+
+          {/* Job Freshness Distribution */}
+          <ChartCard title="Job Listing Freshness" subtitle={`How fresh are our active job listings (by original post date)`}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={analytics.job_freshness} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis 
+                  type="number"
+                  tick={{ fontSize: 12 }} 
+                  tickLine={false}
+                  axisLine={{ stroke: '#e5e5e5' }}
+                />
+                <YAxis 
+                  type="category"
+                  dataKey="name"
+                  tick={{ fontSize: 12 }} 
+                  tickLine={false}
+                  axisLine={{ stroke: '#e5e5e5' }}
+                  width={80}
+                />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: 'white', 
+                    border: '1px solid #e5e5e5',
+                    borderRadius: '8px',
+                    fontSize: '14px'
+                  }}
+                  formatter={(value) => [(value ?? 0).toLocaleString(), 'Jobs']}
+                />
+                <Bar 
+                  dataKey="value" 
+                  radius={[0, 4, 4, 0]}
+                  name="Jobs"
+                >
+                  {analytics.job_freshness.map((entry, index) => {
+                    // Color gradient from green (fresh) to red (stale)
+                    const freshColors = ['#10B981', '#22C55E', '#84CC16', '#EAB308', '#F59E0B', '#F97316', '#EF4444', '#9CA3AF']
+                    return <Cell key={`cell-${index}`} fill={freshColors[index % freshColors.length]} />
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
 
         {/* Combined view: New Jobs vs Existing Companies Adding Jobs */}

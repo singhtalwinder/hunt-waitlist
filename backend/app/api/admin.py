@@ -1374,12 +1374,12 @@ async def list_running_operations():
 @router.get("/pipeline/stats")
 async def get_pipeline_stats(db: AsyncSession = Depends(get_db)):
     """Get pipeline statistics for the admin UI."""
-    # Companies ready to crawl (have ATS type but never successfully crawled)
+    # Companies ready to crawl (have ATS type but never crawled OR stale >24h)
     ready_to_crawl_result = await db.execute(text('''
         SELECT COUNT(*) FROM companies 
         WHERE is_active = true 
         AND ats_type IS NOT NULL 
-        AND last_crawled_at IS NULL
+        AND (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '24 hours')
     '''))
     companies_ready_to_crawl = ready_to_crawl_result.scalar() or 0
     
@@ -2516,7 +2516,7 @@ async def get_supported_ats_info(db: AsyncSession = Depends(get_db)):
             "percent_enriched": round(100 * row[2] / row[1], 1) if row[1] > 0 else 0,
         })
     
-    # Get companies ready to crawl (have ATS but never crawled) for supported types
+    # Get companies ready to crawl (have ATS but never crawled OR stale >24h) for supported types
     result = await db.execute(text(f'''
         SELECT 
             ats_type,
@@ -2524,7 +2524,8 @@ async def get_supported_ats_info(db: AsyncSession = Depends(get_db)):
         FROM companies
         WHERE ats_type IN ({supported_str})
           AND ats_type IS NOT NULL
-          AND last_crawled_at IS NULL
+          AND is_active = true
+          AND (last_crawled_at IS NULL OR last_crawled_at < NOW() - INTERVAL '24 hours')
         GROUP BY ats_type
     '''))
     crawl_ready_by_ats = {row[0]: row[1] for row in result.fetchall()}
@@ -2807,6 +2808,9 @@ class AnalyticsResponse(BaseModel):
     # Source breakdown
     sources: list[dict]
     
+    # Job freshness distribution (by original posted_at date)
+    job_freshness: list[dict]
+    
     # Summary stats
     totals: dict
 
@@ -2908,7 +2912,35 @@ async def get_analytics(
         for row in sources_result.fetchall()
     ]
     
-    # 7. Summary totals
+    # 7. Job freshness distribution (by original posted_at date)
+    # This shows how fresh our active job listings are
+    job_freshness_result = await db.execute(text("""
+        SELECT 
+            CASE 
+                WHEN posted_at IS NULL THEN 'No date'
+                WHEN posted_at >= NOW() - INTERVAL '1 day' THEN 'Today'
+                WHEN posted_at >= NOW() - INTERVAL '2 days' THEN 'Yesterday'
+                WHEN posted_at >= NOW() - INTERVAL '7 days' THEN '2-7 days'
+                WHEN posted_at >= NOW() - INTERVAL '14 days' THEN '8-14 days'
+                WHEN posted_at >= NOW() - INTERVAL '30 days' THEN '15-30 days'
+                WHEN posted_at >= NOW() - INTERVAL '60 days' THEN '31-60 days'
+                ELSE '60+ days'
+            END as age_bucket,
+            COUNT(*) as count
+        FROM jobs
+        WHERE is_active = TRUE
+        GROUP BY age_bucket
+    """))
+    
+    # Order the buckets properly
+    bucket_order = ['Today', 'Yesterday', '2-7 days', '8-14 days', '15-30 days', '31-60 days', '60+ days', 'No date']
+    freshness_map = {row[0]: row[1] for row in job_freshness_result.fetchall()}
+    job_freshness = [
+        {"name": bucket, "value": freshness_map.get(bucket, 0)}
+        for bucket in bucket_order
+    ]
+    
+    # 8. Summary totals
     total_companies = await db.scalar(select(func.count(Company.id)).where(Company.is_active == True))
     total_jobs = await db.scalar(select(func.count(Job.id)).where(Job.is_active == True))
     total_crawls = await db.scalar(
@@ -2947,6 +2979,7 @@ async def get_analytics(
         delisted_jobs_per_day=delisted_jobs_per_day,
         companies_with_new_jobs_per_day=companies_with_new_jobs_per_day,
         sources=sources,
+        job_freshness=job_freshness,
         totals=totals,
     )
 
@@ -3244,3 +3277,32 @@ async def get_delisted_jobs(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.post("/migrations/run")
+async def run_migration(
+    name: str = Query(..., description="Migration name to run"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a predefined migration by name.
+    
+    Available migrations:
+    - add_enrich_failed_at: Adds enrich_failed_at column to jobs table
+    """
+    migrations = {
+        "add_enrich_failed_at": "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS enrich_failed_at TIMESTAMPTZ",
+    }
+    
+    if name not in migrations:
+        raise HTTPException(status_code=400, detail=f"Unknown migration: {name}. Available: {list(migrations.keys())}")
+    
+    sql = migrations[name]
+    
+    try:
+        # Disable statement timeout for DDL operations
+        await db.execute(text("SET statement_timeout = 0"))
+        await db.execute(text(sql))
+        await db.commit()
+        return {"status": "success", "migration": name, "sql": sql}
+    except Exception as e:
+        return {"status": "error", "migration": name, "error": str(e)}
