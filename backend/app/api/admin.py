@@ -2576,7 +2576,6 @@ async def run_supported_ats_pipeline(
                     data={"ats_types": supported}
                 )
             
-            enrich_service = JobEnrichmentService()
             for i, ats_type in enumerate(supported, 1):
                 async with async_session_factory() as session:
                     await log_to_run(
@@ -2585,13 +2584,19 @@ async def run_supported_ats_pipeline(
                         current_step=f"Enriching {ats_type} ({i}/{len(supported)})"
                     )
                 
-                result = await enrich_service.enrich_jobs_batch(
-                    ats_type=ats_type,
-                    limit=enrich_limit,
-                    run_id=run_id,
-                )
-                total_enriched += result.get("success", 0)
-                total_enrich_failed += result.get("failed", 0)
+                # Create service with a session context for each ATS type
+                async with async_session_factory() as db:
+                    enrich_service = JobEnrichmentService(db)
+                    try:
+                        result = await enrich_service.enrich_jobs_batch(
+                            ats_type=ats_type,
+                            limit=enrich_limit,
+                            run_id=run_id,
+                        )
+                        total_enriched += result.get("success", 0)
+                        total_enrich_failed += result.get("failed", 0)
+                    finally:
+                        await enrich_service.close()
                 
                 async with async_session_factory() as session:
                     await log_to_run(
@@ -2599,8 +2604,6 @@ async def run_supported_ats_pipeline(
                         f"Enriched {ats_type}: {result.get('success', 0)} success, {result.get('failed', 0)} failed",
                         data={"ats_type": ats_type, "success": result.get("success", 0), "failed": result.get("failed", 0)}
                     )
-            
-            await enrich_service.close()
             
             # Phase 2: Generate embeddings for all newly enriched jobs
             async with async_session_factory() as session:
