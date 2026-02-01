@@ -2528,7 +2528,7 @@ async def run_supported_ats_pipeline(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     enrich_limit: Optional[int] = Query(None, ge=1, description="Max jobs to enrich per ATS (None = no limit)"),
-    embeddings_limit: Optional[int] = Query(None, ge=1, description="Max jobs to embed (None = no limit)"),
+    cascade: bool = Query(True, description="Also run embeddings after enrichment"),
 ):
     """One-click pipeline for supported ATS types.
     
@@ -2540,8 +2540,6 @@ async def run_supported_ats_pipeline(
     from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
     from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run, log_to_run
     from app.engines.pipeline.supported_ats import get_supported_ats_types
-    from app.engines.enrich.service import JobEnrichmentService
-    from app.engines.normalize.service import generate_embeddings_batch
     
     # Check if already running
     if operation_registry.is_running("supported_ats_pipeline"):
@@ -2554,149 +2552,106 @@ async def run_supported_ats_pipeline(
         db,
         stage="supported_ats",
         current_step=f"Starting one-click pipeline for {len(supported)} ATS types",
-        cascade=True,
+        cascade=cascade,
     )
     
     async def run_in_background():
+        from app.db.session import async_session_factory
+        from app.engines.enrich.service import JobEnrichmentService
+        from app.engines.normalize.service import generate_embeddings_batch
         import structlog
         logger = structlog.get_logger()
-        logger.info("One-click pipeline background task starting", run_id=str(run_id))
-        
-        from app.db.session import async_session_factory
         
         operation_registry.start("supported_ats_pipeline")
         total_enriched = 0
-        total_enrich_failed = 0
-        total_embedded = 0
-        total_embed_failed = 0
+        total_failed = 0
         
         try:
-            logger.info("One-click pipeline phase 1 starting")
-            # Phase 1: Enrich all supported ATS types
+            # Phase 1: Enrich each supported ATS type
             async with async_session_factory() as session:
                 await log_to_run(
                     session, run_id, "info",
-                    f"Phase 1: Enriching {len(supported)} supported ATS types",
+                    f"Phase 1: Enriching {len(supported)} ATS types",
                     current_step="Phase 1: Enrichment",
                     data={"ats_types": supported}
                 )
             
-            for i, ats_type in enumerate(supported, 1):
-                async with async_session_factory() as session:
-                    await log_to_run(
-                        session, run_id, "info",
-                        f"Enriching {ats_type} ({i}/{len(supported)})",
-                        current_step=f"Enriching {ats_type} ({i}/{len(supported)})"
-                    )
-                
-                # Create service with a session context for each ATS type
-                async with async_session_factory() as db:
-                    enrich_service = JobEnrichmentService(db)
-                    try:
-                        result = await enrich_service.enrich_jobs_batch(
+            async with async_session_factory() as db_session:
+                service = JobEnrichmentService(db_session)
+                try:
+                    for idx, ats_type in enumerate(supported, 1):
+                        await log_to_run(
+                            db_session, run_id, "info",
+                            f"Enriching {ats_type} ({idx}/{len(supported)})",
+                            current_step=f"Enriching {ats_type} ({idx}/{len(supported)})"
+                        )
+                        
+                        result = await service.enrich_jobs_batch(
                             ats_type=ats_type,
                             limit=enrich_limit,
+                            concurrency=5,
                             run_id=run_id,
                         )
+                        
                         total_enriched += result.get("success", 0)
-                        total_enrich_failed += result.get("failed", 0)
-                    finally:
-                        await enrich_service.close()
-                
+                        total_failed += result.get("failed", 0)
+                        
+                        await log_to_run(
+                            db_session, run_id, "info",
+                            f"Enriched {ats_type}: {result.get('success', 0)} success, {result.get('failed', 0)} failed",
+                            data={"ats_type": ats_type, **result}
+                        )
+                finally:
+                    await service.close()
+            
+            # Phase 2: Embeddings (if cascade)
+            total_embedded = 0
+            if cascade:
                 async with async_session_factory() as session:
                     await log_to_run(
                         session, run_id, "info",
-                        f"Enriched {ats_type}: {result.get('success', 0)} success, {result.get('failed', 0)} failed",
-                        data={"ats_type": ats_type, "success": result.get("success", 0), "failed": result.get("failed", 0)}
+                        f"Phase 2: Generating embeddings",
+                        current_step="Phase 2: Embeddings"
                     )
-            
-            # Phase 2: Generate embeddings for all newly enriched jobs
-            async with async_session_factory() as session:
-                await log_to_run(
-                    session, run_id, "info",
-                    f"Phase 2: Generating embeddings (enriched {total_enriched} jobs)",
-                    current_step="Phase 2: Embeddings"
-                )
-            
-            # Generate embeddings in batches
-            batch_size = 100
-            embed_batches = 0
-            limit_remaining = embeddings_limit
-            
-            while True:
-                if embeddings_limit and limit_remaining <= 0:
-                    break
+                
+                # Run embeddings in batches
+                for batch_num in range(1, 100):  # Max 100 batches
+                    result = await generate_embeddings_batch(batch_size=100)
+                    processed = result.get("processed", 0)
+                    total_embedded += processed
                     
-                current_batch = min(batch_size, limit_remaining) if embeddings_limit else batch_size
-                embed_result = await generate_embeddings_batch(batch_size=current_batch)
-                
-                batch_processed = embed_result.get("processed", 0)
-                total_embedded += batch_processed
-                embed_batches += 1
-                
-                if embeddings_limit:
-                    limit_remaining -= batch_processed
-                
-                async with async_session_factory() as session:
-                    await log_to_run(
-                        session, run_id, "info",
-                        f"Embeddings batch {embed_batches}: {batch_processed} processed, {embed_result.get('remaining', 0)} remaining",
-                        current_step=f"Embeddings batch {embed_batches}"
-                    )
-                
-                # Stop if no more jobs or we hit an error
-                if batch_processed == 0 or embed_result.get("error"):
-                    if embed_result.get("error"):
-                        total_embed_failed += 1
-                    break
+                    if processed == 0:
+                        break
+                    
+                    async with async_session_factory() as session:
+                        await log_to_run(
+                            session, run_id, "info",
+                            f"Embeddings batch {batch_num}: {processed} processed",
+                            current_step=f"Embeddings batch {batch_num}"
+                        )
             
-            # Complete the run
+            # Complete
             async with async_session_factory() as session:
                 await complete_pipeline_run(
-                    session,
-                    run_id,
+                    session, run_id,
                     processed=total_enriched + total_embedded,
-                    failed=total_enrich_failed + total_embed_failed,
-                    status="completed",
+                    failed=total_failed,
+                    status="completed"
                 )
                 await log_to_run(
                     session, run_id, "info",
-                    f"One-click pipeline complete: {total_enriched} enriched, {total_embedded} embedded",
-                    data={
-                        "enriched": total_enriched,
-                        "enrich_failed": total_enrich_failed,
-                        "embedded": total_embedded,
-                        "embed_failed": total_embed_failed,
-                    }
+                    f"Complete: {total_enriched} enriched, {total_embedded} embedded, {total_failed} failed"
                 )
                 
         except Exception as e:
-            logger.error("One-click pipeline failed", error=str(e), exc_info=True)
+            logger.error("Supported ATS pipeline failed", error=str(e), exc_info=True)
             async with async_session_factory() as session:
-                await complete_pipeline_run(
-                    session,
-                    run_id,
-                    status="failed",
-                    error=str(e),
-                )
+                await complete_pipeline_run(session, run_id, status="failed", error=str(e))
             raise
         finally:
             operation_registry.stop("supported_ats_pipeline")
     
-    # Use asyncio.create_task with fire_and_forget pattern
-    import asyncio
-    
-    async def fire_and_forget():
-        try:
-            await run_in_background()
-        except Exception as e:
-            import structlog
-            logger = structlog.get_logger()
-            logger.error("One-click pipeline background task failed", error=str(e), exc_info=True)
-    
-    task = asyncio.create_task(fire_and_forget())
-    # Prevent garbage collection
-    task.add_done_callback(lambda t: None)
+    background_tasks.add_task(run_in_background)
     
     return {
         "status": "started",
