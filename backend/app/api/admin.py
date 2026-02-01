@@ -2559,7 +2559,7 @@ async def run_supported_ats_pipeline(
     async def run_in_background():
         from app.db.session import async_session_factory
         
-        operation_registry.start("supported_ats_pipeline")
+        await operation_registry.start_operation("supported_ats_pipeline")
         total_enriched = 0
         total_failed = 0
         
@@ -2616,7 +2616,7 @@ async def run_supported_ats_pipeline(
                 await complete_pipeline_run(session, run_id, status="failed", error=str(e))
             raise
         finally:
-            operation_registry.stop("supported_ats_pipeline")
+            await operation_registry.end_operation("supported_ats_pipeline")
     
     background_tasks.add_task(run_in_background)
     
