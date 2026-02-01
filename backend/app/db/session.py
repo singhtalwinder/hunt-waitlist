@@ -9,12 +9,15 @@ from app.config import get_settings
 settings = get_settings()
 
 # Create async engine
+# Pool size increased to handle concurrent enrichment operations
+# Each enrichment batch can use up to 5 concurrent connections + overhead for logging
 engine = create_async_engine(
     str(settings.database_url),
     echo=settings.debug,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=10,
+    max_overflow=15,
+    pool_timeout=60,  # Wait up to 60s for a connection before failing
 )
 
 # Session factory

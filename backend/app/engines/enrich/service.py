@@ -55,6 +55,11 @@ class JobEnrichmentService:
         self, job: Job, company: Company, client: httpx.AsyncClient
     ) -> bool:
         """Enrich from Greenhouse API."""
+        # Skip if no ATS identifier - can't call the API
+        if not company.ats_identifier:
+            logger.debug(f"No ats_identifier for company {company.id}, skipping greenhouse enrichment")
+            return False
+        
         url = job.source_url or ""
         
         # Extract job ID from various URL patterns:
@@ -179,6 +184,11 @@ class JobEnrichmentService:
         if not job.source_url:
             return False
         
+        # Skip if no ATS identifier - needed for API fallback
+        if not company.ats_identifier:
+            logger.debug(f"No ats_identifier for company {company.id}, skipping ashby enrichment")
+            return False
+        
         # Extract job ID from URL - Ashby URLs are like:
         # https://jobs.ashbyhq.com/company/abc123-uuid-here
         job_id = None
@@ -277,7 +287,11 @@ class JobEnrichmentService:
         self, job: Job, company: Company, client: httpx.AsyncClient
     ) -> bool:
         """Enrich from Workable v2 API."""
-        if not job.source_url or not company.ats_identifier:
+        if not job.source_url:
+            return False
+        
+        if not company.ats_identifier:
+            logger.debug(f"No ats_identifier for company {company.id}, skipping workable enrichment")
             return False
         
         try:
@@ -397,6 +411,7 @@ class JobEnrichmentService:
         limit: Optional[int] = None,
         concurrency: int = 10,
         batch_size: int = 500,
+        run_id: Optional[UUID] = None,
     ) -> dict:
         """Enrich jobs that are missing descriptions in continuous batches.
         
@@ -408,13 +423,23 @@ class JobEnrichmentService:
             limit: Optional total limit (None = no limit, process all)
             concurrency: Max concurrent enrichment operations per batch
             batch_size: Number of jobs to fetch per batch
+            run_id: Optional pipeline run ID for progress logging
         """
         from app.db import async_session_factory
+        from app.engines.pipeline.run_logger import log_to_run, check_if_cancelled
         
-        results = {"success": 0, "failed": 0, "batches": 0}
+        results = {"success": 0, "failed": 0, "batches": 0, "cancelled": False}
         total_processed = 0
         
         while True:
+            # Check for cancellation
+            if run_id:
+                async with async_session_factory() as db:
+                    if await check_if_cancelled(db, run_id):
+                        results["cancelled"] = True
+                        logger.info("Enrichment cancelled by user")
+                        break
+            
             # Check if we've hit the total limit
             if limit is not None and total_processed >= limit:
                 break
@@ -443,18 +468,37 @@ class JobEnrichmentService:
             
             # No more jobs to enrich - we're done
             if not jobs_to_enrich:
-                logger.info("No more jobs to enrich")
+                logger.info(f"No more jobs to enrich for {ats_type or 'all ATS types'}")
+                if run_id:
+                    async with async_session_factory() as db:
+                        await log_to_run(
+                            db, run_id, "info",
+                            f"No jobs found needing enrichment for {ats_type or 'all ATS types'}",
+                            current_step="No jobs to enrich"
+                        )
                 break
             
             results["batches"] += 1
             logger.info(f"Enrichment batch {results['batches']}: processing {len(jobs_to_enrich)} jobs")
             
+            # Log batch start
+            if run_id:
+                async with async_session_factory() as db:
+                    await log_to_run(
+                        db, run_id, "info",
+                        f"Starting batch {results['batches']}: {len(jobs_to_enrich)} jobs",
+                        current_step=f"Batch {results['batches']}: 0/{len(jobs_to_enrich)}",
+                        progress_count=results["success"],
+                        failed_count=results["failed"]
+                    )
+            
             semaphore = asyncio.Semaphore(concurrency)
             batch_success = 0
             batch_failed = 0
+            batch_processed = 0
             
             async def enrich_with_semaphore(job: Job, company: Company):
-                nonlocal batch_success, batch_failed
+                nonlocal batch_success, batch_failed, batch_processed
                 async with semaphore:
                     # Use separate session for each job
                     async with async_session_factory() as db:
@@ -464,10 +508,12 @@ class JobEnrichmentService:
                         
                         if not job_in_session:
                             batch_failed += 1
+                            batch_processed += 1
                             return
                         
                         # Skip if already enriched (race condition protection)
                         if job_in_session.description:
+                            batch_processed += 1
                             return
                         
                         service = JobEnrichmentService(db)
@@ -478,6 +524,7 @@ class JobEnrichmentService:
                                 batch_success += 1
                             else:
                                 batch_failed += 1
+                            batch_processed += 1
                         finally:
                             await service.close()
             
@@ -492,6 +539,18 @@ class JobEnrichmentService:
                 f"Batch {results['batches']} complete: {batch_success} success, {batch_failed} failed. "
                 f"Total: {results['success']} success, {results['failed']} failed"
             )
+            
+            # Log batch completion to pipeline run
+            if run_id:
+                async with async_session_factory() as db:
+                    await log_to_run(
+                        db, run_id, "info",
+                        f"Batch {results['batches']} complete: {batch_success} success, {batch_failed} failed",
+                        current_step=f"Batch {results['batches']} complete",
+                        progress_count=results["success"],
+                        failed_count=results["failed"],
+                        data={"batch": results["batches"], "batch_success": batch_success, "batch_failed": batch_failed}
+                    )
         
         logger.info(f"Enrichment complete: {results['batches']} batches, {results['success']} success, {results['failed']} failed")
         return results

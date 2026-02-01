@@ -582,7 +582,8 @@ class PipelineOrchestrator:
                     result = await service.enrich_jobs_batch(
                         ats_type=ats_type,
                         limit=limit,
-                        concurrency=10,  # Keep below pool limit (15) to leave room for parent sessions
+                        concurrency=5,  # Reduced to avoid connection pool exhaustion
+                        run_id=run_id,  # Pass run_id for progress logging
                     )
                     
                     ats_success = result.get("success", 0)
@@ -1000,6 +1001,15 @@ class PipelineOrchestrator:
         results = {"success": 0, "failed": 0, "cancelled": False, "ats_type": ats_type}
         
         async with async_session_factory() as db:
+            # Log start to pipeline run
+            if run_id:
+                limit_msg = f"up to {limit}" if limit else "all"
+                await log_to_run(
+                    db, run_id, "info",
+                    f"Starting enrichment for {ats_type} ({limit_msg} jobs)",
+                    current_step=f"Enriching {ats_type} jobs"
+                )
+            
             service = JobEnrichmentService(db)
             
             try:
@@ -1008,7 +1018,8 @@ class PipelineOrchestrator:
                 result = await service.enrich_jobs_batch(
                     ats_type=ats_type,
                     limit=limit,
-                    concurrency=10,  # Keep below pool limit (15) to leave room for parent sessions
+                    concurrency=5,  # Reduced to avoid connection pool exhaustion
+                    run_id=run_id,  # Pass run_id for progress logging
                 )
                 
                 results["success"] = result.get("success", 0)
@@ -1018,6 +1029,17 @@ class PipelineOrchestrator:
                     "success": results["success"],
                     "failed": results["failed"],
                 })
+                
+                # Log completion to pipeline run
+                if run_id:
+                    await log_to_run(
+                        db, run_id, "info",
+                        f"Enrichment complete for {ats_type}: {results['success']} success, {results['failed']} failed",
+                        current_step=f"Complete",
+                        progress_count=results["success"],
+                        failed_count=results["failed"],
+                        data={"ats_type": ats_type, "success": results["success"], "failed": results["failed"]}
+                    )
             finally:
                 await service.close()
         
