@@ -81,6 +81,87 @@
         </div>
     </div>
     
+    <!-- Supported ATS One-Click Pipeline -->
+    <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 p-4 lg:p-6 mb-6 lg:mb-8">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div class="flex-1">
+                <div class="flex items-center gap-2 mb-2">
+                    <h2 class="text-lg font-semibold text-indigo-900">One-Click Pipeline</h2>
+                    <span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-medium rounded-full">Supported ATS</span>
+                </div>
+                <p class="text-sm text-indigo-700 mb-3">Enrich + Embed all jobs from reliable ATS types in one click</p>
+                
+                <!-- ATS Types List -->
+                <div class="flex flex-wrap gap-2 mb-3">
+                    <template x-for="ats in (supportedAts.supported_ats_types || [])" :key="ats">
+                        <span class="px-2 py-1 bg-white border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg" x-text="ats"></span>
+                    </template>
+                </div>
+                
+                <!-- Stats -->
+                <div class="flex flex-wrap gap-4 text-sm">
+                    <div class="flex items-center gap-1">
+                        <span class="text-indigo-600 font-semibold" x-text="(supportedAts.stats?.supported?.needs_enrichment || 0).toLocaleString()"></span>
+                        <span class="text-indigo-500">need enrichment</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <span class="text-green-600 font-semibold" x-text="(supportedAts.stats?.supported?.percent_enriched || 0) + '%'"></span>
+                        <span class="text-green-500">enriched</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <span class="text-purple-600 font-semibold" x-text="(supportedAts.stats?.supported?.total_jobs || 0).toLocaleString()"></span>
+                        <span class="text-purple-500">total jobs</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Action Button -->
+            <div class="flex flex-col items-end gap-2">
+                <button @click="runSupportedAtsPipeline()" 
+                        :disabled="isRunning('supported_ats_pipeline')"
+                        :class="isRunning('supported_ats_pipeline') ? 'opacity-50 cursor-not-allowed' : ''"
+                        class="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold transition-colors flex items-center gap-2 shadow-lg shadow-indigo-200">
+                    <template x-if="isRunning('supported_ats_pipeline')">
+                        <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </template>
+                    <template x-if="!isRunning('supported_ats_pipeline')">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                    </template>
+                    <span x-text="isRunning('supported_ats_pipeline') ? 'Running...' : 'Run One-Click Pipeline'"></span>
+                </button>
+                <template x-if="supportedAtsStatus.status === 'running'">
+                    <div class="text-xs text-indigo-600" x-text="supportedAtsStatus.current_step || 'Processing...'"></div>
+                </template>
+                <template x-if="supportedAtsStatus.status === 'completed'">
+                    <div class="text-xs text-green-600" x-text="'Last run: ' + (supportedAtsStatus.processed || 0) + ' processed'"></div>
+                </template>
+            </div>
+        </div>
+        
+        <!-- Per-ATS Breakdown (collapsible) -->
+        <details class="mt-4">
+            <summary class="cursor-pointer text-sm font-medium text-indigo-700 hover:text-indigo-800">
+                View breakdown by ATS type
+            </summary>
+            <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <template x-for="ats in (supportedAts.by_ats || [])" :key="ats.ats_type">
+                    <div class="bg-white rounded-lg p-3 border border-indigo-100">
+                        <div class="font-medium text-gray-900 text-sm" x-text="ats.ats_type"></div>
+                        <div class="text-xs text-gray-500 mt-1">
+                            <span class="text-indigo-600 font-semibold" x-text="ats.needs_enrichment?.toLocaleString()"></span> pending
+                        </div>
+                        <div class="text-xs text-gray-400" x-text="ats.percent_enriched + '% done'"></div>
+                    </div>
+                </template>
+            </div>
+        </details>
+    </div>
+
     <!-- Pipeline Actions -->
     <div class="bg-white rounded-xl border border-gray-200 p-4 lg:p-6 mb-6 lg:mb-8">
         <div class="flex items-center justify-between mb-4">
@@ -416,6 +497,8 @@ function pipelineApp() {
         runningOperations: {},  // Track which operations are running
         selectedRun: null,
         refreshInterval: null,
+        supportedAts: {},  // Supported ATS pipeline stats
+        supportedAtsStatus: {},  // Current status of supported ATS pipeline
         
         // Check if a specific operation type is running
         isRunning(opType) {
@@ -431,7 +514,9 @@ function pipelineApp() {
             await Promise.all([
                 this.loadStats(),
                 this.loadRuns(),
-                this.loadOperations()
+                this.loadOperations(),
+                this.loadSupportedAts(),
+                this.loadSupportedAtsStatus()
             ]);
             this.startAutoRefresh();
         },
@@ -440,8 +525,10 @@ function pipelineApp() {
             this.refreshInterval = setInterval(() => {
                 this.loadStats();
                 this.loadOperations();
+                this.loadSupportedAtsStatus();
                 if (this.anyRunning || this.runs.some(r => r.status === 'running')) {
                     this.loadRuns();
+                    this.loadSupportedAts();
                 }
             }, 3000);
         },
@@ -559,6 +646,43 @@ function pipelineApp() {
             }
         },
         
+        async loadSupportedAts() {
+            try {
+                const res = await fetch('/api/admin/pipeline/supported-ats');
+                if (res.ok) {
+                    this.supportedAts = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load supported ATS stats:', e);
+            }
+        },
+        
+        async loadSupportedAtsStatus() {
+            try {
+                const res = await fetch('/api/admin/pipeline/supported-ats/status');
+                if (res.ok) {
+                    this.supportedAtsStatus = await res.json();
+                }
+            } catch (e) {
+                console.error('Failed to load supported ATS status:', e);
+            }
+        },
+        
+        async runSupportedAtsPipeline() {
+            try {
+                const res = await fetch('/api/admin/pipeline/supported-ats/run?cascade=true', { method: 'POST' });
+                const data = await res.json();
+                if (data.error) {
+                    showMessage(data.error, 'error');
+                } else {
+                    showMessage(data.message || 'One-click pipeline started', 'success');
+                }
+                await Promise.all([this.loadRuns(), this.loadOperations(), this.loadSupportedAtsStatus()]);
+            } catch (e) {
+                showMessage(`Failed: ${e.message}`, 'error');
+            }
+        },
+        
         openRunDetail(run) {
             this.selectedRun = run;
         },
@@ -594,7 +718,8 @@ function pipelineApp() {
                 'crawl': 'Find Jobs',
                 'custom_crawl': 'Custom Crawl',
                 'enrich': 'Get Descriptions',
-                'embeddings': 'Generate Embeddings'
+                'embeddings': 'Generate Embeddings',
+                'supported_ats': 'One-Click Pipeline'
             };
             return names[stage] || stage;
         },
