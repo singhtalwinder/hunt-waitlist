@@ -1790,6 +1790,71 @@ async def run_ats_detection(
     return {"status": "started", "message": msg, "run_id": str(run_id) if run_id else None, "operation_type": "detect_ats"}
 
 
+@router.post("/pipeline/move-dormant")
+async def move_companies_to_dormant_endpoint(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=500, description="Max companies to move"),
+    reason: str = Query("no_careers_url", description="Reason for moving to dormant"),
+):
+    """
+    Move companies without careers pages to the dormant table.
+    
+    These companies can be periodically re-checked to see if they've added careers pages.
+    """
+    from app.engines.discovery.ats_detection_service import move_companies_to_dormant
+    
+    result = await move_companies_to_dormant(db, reason=reason, limit=limit)
+    return result
+
+
+@router.post("/pipeline/recheck-dormant")
+async def recheck_dormant_companies_endpoint(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, ge=1, le=200, description="Max companies to check"),
+):
+    """
+    Re-check dormant companies to see if they've added careers pages.
+    
+    Reactivates companies that now have detectable careers pages.
+    """
+    from app.engines.discovery.ats_detection_service import recheck_dormant_companies
+    
+    result = await recheck_dormant_companies(db, limit=limit)
+    return result
+
+
+@router.get("/pipeline/dormant-stats")
+async def get_dormant_stats(db: AsyncSession = Depends(get_db)):
+    """Get statistics about dormant companies."""
+    from app.engines.discovery.ats_detection_service import ensure_dormant_table_exists
+    
+    await ensure_dormant_table_exists(db)
+    
+    result = await db.execute(text('''
+        SELECT 
+            dormant_reason,
+            COUNT(*) as count,
+            COUNT(*) FILTER (WHERE last_checked_at IS NULL) as never_checked,
+            COUNT(*) FILTER (WHERE last_checked_at < NOW() - INTERVAL '30 days') as stale
+        FROM companies_dormant
+        GROUP BY dormant_reason
+    '''))
+    rows = result.fetchall()
+    
+    return {
+        "by_reason": [
+            {
+                "reason": row.dormant_reason,
+                "count": row.count,
+                "never_checked": row.never_checked,
+                "stale": row.stale,
+            }
+            for row in rows
+        ],
+        "total": sum(row.count for row in rows),
+    }
+
+
 @router.post("/pipeline/crawl-custom")
 async def run_custom_crawl(
     background_tasks: BackgroundTasks,
@@ -2371,6 +2436,292 @@ async def get_embeddings_stage_status(db: AsyncSession = Depends(get_db)):
             "without_embeddings": row[2],
             "percent_complete": round(100 * row[1] / row[0], 1) if row[0] > 0 else 0,
         }
+    }
+
+
+# ========== Supported ATS Pipeline (One-Click Processing) ==========
+
+@router.get("/pipeline/supported-ats")
+async def get_supported_ats_info(db: AsyncSession = Depends(get_db)):
+    """Get supported ATS types and stats for one-click processing.
+    
+    Supported ATS types have reliable API/scraping methods and can be
+    processed with a single click: crawl -> enrich -> embeddings.
+    """
+    from app.engines.pipeline.supported_ats import get_supported_ats_types
+    
+    supported = get_supported_ats_types()
+    supported_str = ", ".join(f"'{a}'" for a in supported)
+    
+    # Get stats for supported vs unsupported
+    result = await db.execute(text(f'''
+        WITH job_stats AS (
+            SELECT 
+                c.ats_type,
+                CASE WHEN c.ats_type IN ({supported_str}) THEN 'supported' ELSE 'unsupported' END as category,
+                COUNT(j.id) as total_jobs,
+                COUNT(CASE WHEN j.description IS NOT NULL THEN 1 END) as with_description,
+                COUNT(CASE WHEN j.description IS NULL THEN 1 END) as needs_enrichment,
+                COUNT(CASE WHEN j.embedding IS NOT NULL THEN 1 END) as with_embeddings
+            FROM jobs j
+            JOIN companies c ON j.company_id = c.id
+            WHERE j.is_active = true
+            GROUP BY c.ats_type
+        )
+        SELECT 
+            category,
+            SUM(total_jobs) as total_jobs,
+            SUM(with_description) as with_description,
+            SUM(needs_enrichment) as needs_enrichment,
+            SUM(with_embeddings) as with_embeddings
+        FROM job_stats
+        GROUP BY category
+    '''))
+    
+    stats = {"supported": {}, "unsupported": {}}
+    for row in result.fetchall():
+        category = row[0]
+        stats[category] = {
+            "total_jobs": row[1],
+            "with_description": row[2],
+            "needs_enrichment": row[3],
+            "with_embeddings": row[4],
+            "percent_enriched": round(100 * row[2] / row[1], 1) if row[1] > 0 else 0,
+            "percent_embedded": round(100 * row[4] / row[1], 1) if row[1] > 0 else 0,
+        }
+    
+    # Get per-ATS breakdown for supported types
+    result = await db.execute(text(f'''
+        SELECT 
+            c.ats_type,
+            COUNT(j.id) as total_jobs,
+            COUNT(CASE WHEN j.description IS NOT NULL THEN 1 END) as with_description,
+            COUNT(CASE WHEN j.description IS NULL THEN 1 END) as needs_enrichment,
+            COUNT(CASE WHEN j.embedding IS NOT NULL THEN 1 END) as with_embeddings
+        FROM jobs j
+        JOIN companies c ON j.company_id = c.id
+        WHERE j.is_active = true AND c.ats_type IN ({supported_str})
+        GROUP BY c.ats_type
+        ORDER BY COUNT(j.id) DESC
+    '''))
+    
+    by_ats = []
+    for row in result.fetchall():
+        by_ats.append({
+            "ats_type": row[0],
+            "total_jobs": row[1],
+            "with_description": row[2],
+            "needs_enrichment": row[3],
+            "with_embeddings": row[4],
+            "percent_enriched": round(100 * row[2] / row[1], 1) if row[1] > 0 else 0,
+        })
+    
+    return {
+        "supported_ats_types": supported,
+        "stats": stats,
+        "by_ats": by_ats,
+    }
+
+
+@router.post("/pipeline/supported-ats/run")
+async def run_supported_ats_pipeline(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    enrich_limit: Optional[int] = Query(None, ge=1, description="Max jobs to enrich per ATS (None = no limit)"),
+    embeddings_limit: Optional[int] = Query(None, ge=1, description="Max jobs to embed (None = no limit)"),
+):
+    """One-click pipeline for supported ATS types.
+    
+    Runs the full pipeline (enrich -> embeddings) for all supported ATS types:
+    - greenhouse, lever, ashby, workable, jobvite, workday
+    
+    These ATS types have reliable API/scraping and typically achieve >95% success rate.
+    """
+    from app.engines.pipeline.orchestrator import PipelineOrchestrator, operation_registry
+    from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run, log_to_run
+    from app.engines.pipeline.supported_ats import get_supported_ats_types
+    from app.engines.enrich.service import JobEnrichmentService
+    from app.engines.embed.service import EmbeddingService
+    
+    # Check if already running
+    if operation_registry.is_running("supported_ats_pipeline"):
+        return {"error": "Supported ATS pipeline already running", "running_operations": operation_registry.to_dict()}
+    
+    supported = get_supported_ats_types()
+    
+    # Create pipeline run
+    run_id = await create_pipeline_run(
+        db,
+        stage="supported_ats",
+        current_step=f"Starting one-click pipeline for {len(supported)} ATS types",
+        cascade=True,
+    )
+    
+    async def run_in_background():
+        from app.db.session import async_session_factory
+        
+        operation_registry.start("supported_ats_pipeline")
+        total_enriched = 0
+        total_enrich_failed = 0
+        total_embedded = 0
+        total_embed_failed = 0
+        
+        try:
+            # Phase 1: Enrich all supported ATS types
+            async with async_session_factory() as session:
+                await log_to_run(
+                    session, run_id, "info",
+                    f"Phase 1: Enriching {len(supported)} supported ATS types",
+                    current_step="Phase 1: Enrichment",
+                    data={"ats_types": supported}
+                )
+            
+            enrich_service = JobEnrichmentService()
+            for i, ats_type in enumerate(supported, 1):
+                async with async_session_factory() as session:
+                    await log_to_run(
+                        session, run_id, "info",
+                        f"Enriching {ats_type} ({i}/{len(supported)})",
+                        current_step=f"Enriching {ats_type} ({i}/{len(supported)})"
+                    )
+                
+                result = await enrich_service.enrich_jobs_batch(
+                    ats_type=ats_type,
+                    limit=enrich_limit,
+                    run_id=run_id,
+                )
+                total_enriched += result.get("success", 0)
+                total_enrich_failed += result.get("failed", 0)
+                
+                async with async_session_factory() as session:
+                    await log_to_run(
+                        session, run_id, "info",
+                        f"Enriched {ats_type}: {result.get('success', 0)} success, {result.get('failed', 0)} failed",
+                        data={"ats_type": ats_type, "success": result.get("success", 0), "failed": result.get("failed", 0)}
+                    )
+            
+            await enrich_service.close()
+            
+            # Phase 2: Generate embeddings for all newly enriched jobs
+            async with async_session_factory() as session:
+                await log_to_run(
+                    session, run_id, "info",
+                    f"Phase 2: Generating embeddings (enriched {total_enriched} jobs)",
+                    current_step="Phase 2: Embeddings"
+                )
+            
+            embed_service = EmbeddingService()
+            embed_result = await embed_service.embed_jobs_batch(
+                limit=embeddings_limit,
+                run_id=run_id,
+            )
+            total_embedded = embed_result.get("success", 0)
+            total_embed_failed = embed_result.get("failed", 0)
+            
+            # Complete the run
+            async with async_session_factory() as session:
+                await complete_pipeline_run(
+                    session,
+                    run_id,
+                    processed=total_enriched + total_embedded,
+                    failed=total_enrich_failed + total_embed_failed,
+                    status="completed",
+                )
+                await log_to_run(
+                    session, run_id, "info",
+                    f"One-click pipeline complete: {total_enriched} enriched, {total_embedded} embedded",
+                    data={
+                        "enriched": total_enriched,
+                        "enrich_failed": total_enrich_failed,
+                        "embedded": total_embedded,
+                        "embed_failed": total_embed_failed,
+                    }
+                )
+                
+        except Exception as e:
+            async with async_session_factory() as session:
+                await complete_pipeline_run(
+                    session,
+                    run_id,
+                    status="failed",
+                    error=str(e),
+                )
+            raise
+        finally:
+            operation_registry.stop("supported_ats_pipeline")
+    
+    background_tasks.add_task(run_in_background)
+    
+    return {
+        "status": "started",
+        "message": f"One-click pipeline started for {len(supported)} ATS types: {', '.join(supported)}",
+        "run_id": str(run_id),
+        "supported_ats": supported,
+    }
+
+
+@router.get("/pipeline/supported-ats/status")
+async def get_supported_ats_pipeline_status(db: AsyncSession = Depends(get_db)):
+    """Get status of the supported ATS one-click pipeline."""
+    from app.engines.pipeline.orchestrator import operation_registry
+    
+    # Get latest run
+    result = await db.execute(text('''
+        SELECT id, status, processed, failed, current_step, created_at, completed_at, logs
+        FROM pipeline_runs
+        WHERE stage = 'supported_ats'
+        ORDER BY created_at DESC
+        LIMIT 1
+    '''))
+    row = result.fetchone()
+    
+    if not row:
+        return {"status": "never_run", "is_running": False}
+    
+    is_running = operation_registry.is_running("supported_ats_pipeline")
+    
+    return {
+        "run_id": str(row[0]),
+        "status": row[1],
+        "is_running": is_running,
+        "processed": row[2],
+        "failed": row[3],
+        "current_step": row[4],
+        "started_at": row[5].isoformat() if row[5] else None,
+        "completed_at": row[6].isoformat() if row[6] else None,
+        "logs": row[7] if row[7] else [],
+    }
+
+
+@router.post("/pipeline/supported-ats/add/{ats_type}")
+async def add_supported_ats_type(ats_type: str):
+    """Add an ATS type to the supported list (runtime only).
+    
+    For permanent changes, update SUPPORTED_ATS_TYPES in supported_ats.py.
+    """
+    from app.engines.pipeline.supported_ats import add_supported_ats, get_supported_ats_types
+    
+    added = add_supported_ats(ats_type)
+    return {
+        "status": "added" if added else "already_exists",
+        "ats_type": ats_type.lower(),
+        "supported_ats_types": get_supported_ats_types(),
+    }
+
+
+@router.post("/pipeline/supported-ats/remove/{ats_type}")
+async def remove_supported_ats_type(ats_type: str):
+    """Remove an ATS type from the supported list (runtime only).
+    
+    For permanent changes, update SUPPORTED_ATS_TYPES in supported_ats.py.
+    """
+    from app.engines.pipeline.supported_ats import remove_supported_ats, get_supported_ats_types
+    
+    removed = remove_supported_ats(ats_type)
+    return {
+        "status": "removed" if removed else "not_found",
+        "ats_type": ats_type.lower(),
+        "supported_ats_types": get_supported_ats_types(),
     }
 
 
