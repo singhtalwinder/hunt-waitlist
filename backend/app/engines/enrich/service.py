@@ -473,6 +473,7 @@ class JobEnrichmentService:
         
         results = {"success": 0, "failed": 0, "batches": 0, "cancelled": False}
         total_processed = 0
+        attempted_job_ids: set = set()  # Track attempted jobs to avoid infinite retries
         
         while True:
             # Check for cancellation
@@ -503,6 +504,10 @@ class JobEnrichmentService:
                 
                 if ats_type:
                     query = query.where(Company.ats_type == ats_type)
+                
+                # Exclude already-attempted jobs to avoid infinite retries
+                if attempted_job_ids:
+                    query = query.where(Job.id.notin_(attempted_job_ids))
                 
                 query = query.limit(fetch_limit)
                 
@@ -573,6 +578,10 @@ class JobEnrichmentService:
             
             tasks = [enrich_with_semaphore(job, company) for job, company in jobs_to_enrich]
             await asyncio.gather(*tasks)
+            
+            # Track all attempted jobs to avoid retrying them
+            for job, _ in jobs_to_enrich:
+                attempted_job_ids.add(job.id)
             
             results["success"] += batch_success
             results["failed"] += batch_failed
