@@ -2546,6 +2546,7 @@ async def run_supported_ats_pipeline(
         return {"error": "Supported ATS pipeline already running", "running_operations": operation_registry.to_dict()}
     
     supported = get_supported_ats_types()
+    orchestrator = PipelineOrchestrator()
     
     # Create pipeline run
     run_id = await create_pipeline_run(
@@ -2557,17 +2558,13 @@ async def run_supported_ats_pipeline(
     
     async def run_in_background():
         from app.db.session import async_session_factory
-        from app.engines.enrich.service import JobEnrichmentService
-        from app.engines.normalize.service import generate_embeddings_batch
-        import structlog
-        logger = structlog.get_logger()
         
         operation_registry.start("supported_ats_pipeline")
         total_enriched = 0
         total_failed = 0
         
         try:
-            # Phase 1: Enrich each supported ATS type
+            # Phase 1: Enrich each supported ATS type using orchestrator
             async with async_session_factory() as session:
                 await log_to_run(
                     session, run_id, "info",
@@ -2576,33 +2573,14 @@ async def run_supported_ats_pipeline(
                     data={"ats_types": supported}
                 )
             
-            async with async_session_factory() as db_session:
-                service = JobEnrichmentService(db_session)
-                try:
-                    for idx, ats_type in enumerate(supported, 1):
-                        await log_to_run(
-                            db_session, run_id, "info",
-                            f"Enriching {ats_type} ({idx}/{len(supported)})",
-                            current_step=f"Enriching {ats_type} ({idx}/{len(supported)})"
-                        )
-                        
-                        result = await service.enrich_jobs_batch(
-                            ats_type=ats_type,
-                            limit=enrich_limit,
-                            concurrency=5,
-                            run_id=run_id,
-                        )
-                        
-                        total_enriched += result.get("success", 0)
-                        total_failed += result.get("failed", 0)
-                        
-                        await log_to_run(
-                            db_session, run_id, "info",
-                            f"Enriched {ats_type}: {result.get('success', 0)} success, {result.get('failed', 0)} failed",
-                            data={"ats_type": ats_type, **result}
-                        )
-                finally:
-                    await service.close()
+            for idx, ats_type in enumerate(supported, 1):
+                result = await orchestrator.run_enrich_standalone(
+                    ats_type=ats_type,
+                    limit=enrich_limit,
+                    run_id=run_id,
+                )
+                total_enriched += result.get("success", 0)
+                total_failed += result.get("failed", 0)
             
             # Phase 2: Embeddings (if cascade)
             total_embedded = 0
@@ -2614,21 +2592,8 @@ async def run_supported_ats_pipeline(
                         current_step="Phase 2: Embeddings"
                     )
                 
-                # Run embeddings in batches
-                for batch_num in range(1, 100):  # Max 100 batches
-                    result = await generate_embeddings_batch(batch_size=100)
-                    processed = result.get("processed", 0)
-                    total_embedded += processed
-                    
-                    if processed == 0:
-                        break
-                    
-                    async with async_session_factory() as session:
-                        await log_to_run(
-                            session, run_id, "info",
-                            f"Embeddings batch {batch_num}: {processed} processed",
-                            current_step=f"Embeddings batch {batch_num}"
-                        )
+                embed_result = await orchestrator._run_embeddings(run_id=run_id)
+                total_embedded = embed_result.get("processed", 0)
             
             # Complete
             async with async_session_factory() as session:
@@ -2644,6 +2609,8 @@ async def run_supported_ats_pipeline(
                 )
                 
         except Exception as e:
+            import structlog
+            logger = structlog.get_logger()
             logger.error("Supported ATS pipeline failed", error=str(e), exc_info=True)
             async with async_session_factory() as session:
                 await complete_pipeline_run(session, run_id, status="failed", error=str(e))
