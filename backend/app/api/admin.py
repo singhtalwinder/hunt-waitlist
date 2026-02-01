@@ -2541,7 +2541,7 @@ async def run_supported_ats_pipeline(
     from app.engines.pipeline.run_logger import create_pipeline_run, complete_pipeline_run, log_to_run
     from app.engines.pipeline.supported_ats import get_supported_ats_types
     from app.engines.enrich.service import JobEnrichmentService
-    from app.engines.embed.service import EmbeddingService
+    from app.engines.normalize.service import generate_embeddings_batch
     
     # Check if already running
     if operation_registry.is_running("supported_ats_pipeline"):
@@ -2610,13 +2610,37 @@ async def run_supported_ats_pipeline(
                     current_step="Phase 2: Embeddings"
                 )
             
-            embed_service = EmbeddingService()
-            embed_result = await embed_service.embed_jobs_batch(
-                limit=embeddings_limit,
-                run_id=run_id,
-            )
-            total_embedded = embed_result.get("success", 0)
-            total_embed_failed = embed_result.get("failed", 0)
+            # Generate embeddings in batches
+            batch_size = 100
+            embed_batches = 0
+            limit_remaining = embeddings_limit
+            
+            while True:
+                if embeddings_limit and limit_remaining <= 0:
+                    break
+                    
+                current_batch = min(batch_size, limit_remaining) if embeddings_limit else batch_size
+                embed_result = await generate_embeddings_batch(batch_size=current_batch)
+                
+                batch_processed = embed_result.get("processed", 0)
+                total_embedded += batch_processed
+                embed_batches += 1
+                
+                if embeddings_limit:
+                    limit_remaining -= batch_processed
+                
+                async with async_session_factory() as session:
+                    await log_to_run(
+                        session, run_id, "info",
+                        f"Embeddings batch {embed_batches}: {batch_processed} processed, {embed_result.get('remaining', 0)} remaining",
+                        current_step=f"Embeddings batch {embed_batches}"
+                    )
+                
+                # Stop if no more jobs or we hit an error
+                if batch_processed == 0 or embed_result.get("error"):
+                    if embed_result.get("error"):
+                        total_embed_failed += 1
+                    break
             
             # Complete the run
             async with async_session_factory() as session:
