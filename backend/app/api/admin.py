@@ -1384,12 +1384,12 @@ async def get_pipeline_stats(db: AsyncSession = Depends(get_db)):
     companies_ready_to_crawl = ready_to_crawl_result.scalar() or 0
     
     # Companies pending ATS detection - detailed breakdown
-    # Note: 4 attempts for tiered strategy (HTTP, Browser, Search, then mark as custom)
+    # Note: 3 attempts for tiered strategy (HTTP, Browser, then mark as custom)
     ats_stats_result = await db.execute(text('''
         SELECT 
             COUNT(*) FILTER (WHERE ats_type IS NULL AND (ats_detection_attempts IS NULL OR ats_detection_attempts = 0)) as never_tried,
-            COUNT(*) FILTER (WHERE ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 4) as tried_pending,
-            COUNT(*) FILTER (WHERE ats_type IS NULL AND ats_detection_attempts >= 4) as exhausted
+            COUNT(*) FILTER (WHERE ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 3) as tried_pending,
+            COUNT(*) FILTER (WHERE ats_type IS NULL AND ats_detection_attempts >= 3) as exhausted
         FROM companies
         WHERE is_active = true
     '''))

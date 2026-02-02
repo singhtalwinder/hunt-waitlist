@@ -61,13 +61,13 @@ class CustomCrawlerService:
         # Browser pool is shared, don't close it
         pass
     
-    async def mark_exhausted_as_custom(self, max_attempts: int = 4) -> int:
+    async def mark_exhausted_as_custom(self, max_attempts: int = 3) -> int:
         """
         Mark companies with exhausted ATS detection attempts as 'custom'.
         
         This allows them to be crawled with the Playwright extractor.
         
-        Note: Default is 4 attempts for tiered strategy (HTTP, Browser, Search, then custom).
+        Note: Default is 3 attempts for tiered strategy (HTTP, Browser, then custom).
         
         Returns:
             Number of companies marked
@@ -311,7 +311,7 @@ class CustomCrawlerService:
                             UPDATE jobs
                             SET description = :desc
                             WHERE id = :id
-                        '''), {"id": job_row.id, "desc": description[:10000]})
+                        '''), {"id": job_row.id, "desc": description})
                         await self.db.commit()
                         
                         stats["success"] += 1

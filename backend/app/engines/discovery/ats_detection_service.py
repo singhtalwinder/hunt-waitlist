@@ -339,7 +339,7 @@ async def detect_ats_for_companies(
     db: AsyncSession,
     batch_size: int = 50,
     include_retries: bool = False,
-    max_attempts: int = 4,
+    max_attempts: int = 3,
     run_id: Optional[UUID] = None,
     continuous: bool = True,
 ) -> dict:
@@ -1189,6 +1189,11 @@ async def detect_ats_tiered(
     """
     Unified ATS detection with tiered strategy based on attempt number.
     
+    Strategy:
+    - Attempt 1: Fast HTTP-based detection (httpx)
+    - Attempt 2: Browser-based detection (Playwright) - for JS-heavy pages
+    - Attempt 3+: Mark as custom
+    
     Args:
         http_client: httpx client for HTTP-based detection
         domain: Company domain
@@ -1199,11 +1204,8 @@ async def detect_ats_tiered(
     
     Returns:
         Tuple of (ats_type, ats_identifier, parent_domain, strategy_used)
-        - strategy_used is one of: "http", "browser", "search"
+        - strategy_used is one of: "http", "browser"
     """
-    # TODO: Set to True once Playwright browsers are installed in Docker image
-    BROWSER_DETECTION_ENABLED = False
-    
     # Attempt 1 (current_attempts == 0): HTTP-based detection
     if current_attempts == 0:
         ats_type, ats_identifier, parent_domain = await _detect_ats_for_company(
@@ -1213,34 +1215,16 @@ async def detect_ats_tiered(
             return ats_type, ats_identifier, parent_domain, "http"
         return None, None, parent_domain, "http"
     
-    # Attempt 2 (current_attempts == 1): Browser-based detection (if enabled)
+    # Attempt 2 (current_attempts == 1): Browser-based detection (Playwright)
     elif current_attempts == 1:
-        if BROWSER_DETECTION_ENABLED:
-            ats_type, ats_identifier, discovered_url = await _detect_ats_browser_based(
-                domain, careers_url, website_url, company_name
-            )
-            if ats_type:
-                return ats_type, ats_identifier, None, "browser"
-            return None, None, None, "browser"
-        else:
-            # Browser not available - use search instead
-            ats_type, ats_identifier, discovered_url = await _detect_ats_search_based(
-                domain, company_name, website_url
-            )
-            if ats_type:
-                return ats_type, ats_identifier, None, "search"
-            return None, None, None, "search"
-    
-    # Attempt 3 (current_attempts == 2): Search-based detection
-    elif current_attempts == 2:
-        ats_type, ats_identifier, discovered_url = await _detect_ats_search_based(
-            domain, company_name, website_url
+        ats_type, ats_identifier, discovered_url = await _detect_ats_browser_based(
+            domain, careers_url, website_url, company_name
         )
         if ats_type:
-            return ats_type, ats_identifier, None, "search"
-        return None, None, None, "search"
+            return ats_type, ats_identifier, None, "browser"
+        return None, None, None, "browser"
     
-    # Attempt 4+: Already exhausted, return None
+    # Attempt 3+: Already exhausted, return None (will be marked as custom)
     else:
         return None, None, None, "exhausted"
 
@@ -1250,8 +1234,8 @@ async def get_ats_detection_stats(db: AsyncSession) -> dict:
     result = await db.execute(text('''
         SELECT 
             COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND (ats_detection_attempts IS NULL OR ats_detection_attempts = 0)) as never_tried,
-            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 4) as tried_pending,
-            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts >= 4) as exhausted,
+            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 3) as tried_pending,
+            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts >= 3) as exhausted,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NOT NULL) as detected,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type = 'custom') as custom,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type = 'uses_parent_ats') as uses_parent
@@ -1340,7 +1324,7 @@ async def move_companies_to_dormant(
             WHERE is_active = true
             AND careers_url IS NULL
             AND ats_type IS NULL
-            AND ats_detection_attempts >= 4
+            AND ats_detection_attempts >= 3
             LIMIT :limit
         ''')
     

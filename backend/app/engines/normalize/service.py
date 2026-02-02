@@ -63,6 +63,89 @@ def get_gemini_embeddings_batch(texts: List[str]) -> List[Optional[List[float]]]
         return [None] * len(texts)
 
 
+# Chunking constants for long text embedding
+CHUNK_SIZE = 6000  # ~1500 tokens, safe for Gemini's 2048 token limit
+CHUNK_OVERLAP = 500  # Overlap to preserve context at boundaries
+
+
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+    """Split text into overlapping chunks for embedding long documents.
+    
+    Uses character-based chunking with word boundary awareness.
+    """
+    if len(text) <= chunk_size:
+        return [text]
+    
+    chunks = []
+    start = 0
+    
+    while start < len(text):
+        end = start + chunk_size
+        
+        if end < len(text):
+            # Try to break at a word boundary (look back for space)
+            boundary = text.rfind(' ', start + chunk_size - 200, end)
+            if boundary > start:
+                end = boundary
+        
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        
+        # Move start, accounting for overlap
+        start = end - overlap
+        if start <= chunks[-1] if chunks else 0:
+            start = end  # Prevent infinite loop
+    
+    return chunks
+
+
+def mean_pool_embeddings(embeddings: List[List[float]]) -> List[float]:
+    """Average multiple embeddings into one (mean pooling)."""
+    if not embeddings:
+        return []
+    if len(embeddings) == 1:
+        return embeddings[0]
+    
+    dim = len(embeddings[0])
+    pooled = [0.0] * dim
+    
+    for emb in embeddings:
+        for i, val in enumerate(emb):
+            pooled[i] += val
+    
+    n = len(embeddings)
+    return [v / n for v in pooled]
+
+
+def get_long_text_embedding(text: str) -> Optional[List[float]]:
+    """Get embedding for long text using chunking + mean pooling.
+    
+    Splits long text into overlapping chunks, embeds each chunk,
+    then averages the embeddings to capture the full document semantics.
+    """
+    if not settings.gemini_api_key:
+        return None
+    
+    chunks = chunk_text(text)
+    
+    if len(chunks) == 1:
+        # Short text, use single embedding
+        return get_gemini_embedding(chunks[0])
+    
+    # Embed all chunks
+    chunk_embeddings = get_gemini_embeddings_batch(chunks)
+    
+    # Filter out any failed embeddings
+    valid_embeddings = [e for e in chunk_embeddings if e is not None]
+    
+    if not valid_embeddings:
+        return None
+    
+    # Mean pool to combine
+    return mean_pool_embeddings(valid_embeddings)
+
+
 class NormalizationEngine:
     """Engine for normalizing raw job data into canonical form."""
 
@@ -359,8 +442,58 @@ async def normalize_jobs_for_company(company_id: str):
         await engine.normalize_company_jobs(UUID(company_id))
 
 
-async def generate_embeddings_batch(batch_size: int = 100) -> dict:
-    """Generate embeddings for jobs that don't have them using Gemini API."""
+def build_embedding_text(job: Job) -> str:
+    """Build rich embedding text from job data.
+    
+    Includes FULL job description for deep semantic understanding.
+    No truncation - long texts are handled via chunking + mean pooling.
+    
+    Structure prioritizes most important info first:
+    1. Title and seniority (what the role is)
+    2. Description (responsibilities, requirements, context) - FULL
+    3. Skills and role family (supporting metadata)
+    """
+    parts = []
+    
+    # Title with seniority context
+    title_part = job.title or ""
+    if job.seniority:
+        title_part = f"{job.seniority.title()} {title_part}"
+    parts.append(title_part)
+    
+    # Full description - the core semantic content (no truncation)
+    if job.description:
+        parts.append(job.description)
+    
+    # Skills as comma-separated list
+    if job.skills:
+        parts.append(f"Skills: {', '.join(job.skills)}")
+    
+    # Role context
+    if job.role_family:
+        parts.append(f"Role: {job.role_family}")
+    if job.role_specialization:
+        parts.append(f"Specialization: {job.role_specialization}")
+    
+    # Location context (can matter for role matching)
+    if job.location_type:
+        parts.append(f"Work type: {job.location_type}")
+    
+    return " ".join(parts)
+
+
+async def generate_embeddings_batch(batch_size: int = 100, require_description: bool = True) -> dict:
+    """Generate embeddings for jobs that don't have them using Gemini API.
+    
+    Uses chunking + mean pooling to embed full job descriptions without truncation.
+    Long descriptions are split into overlapping chunks, each chunk is embedded,
+    then the embeddings are averaged to capture the complete semantic content.
+    
+    Args:
+        batch_size: Number of jobs to process per batch
+        require_description: If True, only process jobs that have descriptions.
+                           This ensures embeddings capture the full semantic content.
+    """
     from app.db import async_session_factory
     
     if not settings.gemini_api_key:
@@ -369,48 +502,64 @@ async def generate_embeddings_batch(batch_size: int = 100) -> dict:
     
     async with async_session_factory() as db:
         # Find jobs without embeddings
-        result = await db.execute(
+        query = (
             select(Job)
             .where(Job.embedding.is_(None))
             .where(Job.is_active == True)
-            .limit(batch_size)
         )
+        
+        # Only embed jobs with descriptions for quality embeddings
+        if require_description:
+            query = query.where(Job.description.isnot(None))
+            query = query.where(Job.description != "")
+        
+        query = query.limit(batch_size)
+        result = await db.execute(query)
         jobs = result.scalars().all()
         
         if not jobs:
             return {"processed": 0, "remaining": 0}
         
-        # Generate embeddings using Gemini batch API
-        texts = []
-        for job in jobs:
-            text = f"{job.title or ''} {job.role_family or ''} {' '.join(job.skills or [])}"
-            texts.append(text)
-        
-        # Batch embedding with Gemini
-        embeddings = get_gemini_embeddings_batch(texts)
-        
-        # Update jobs with embeddings
+        # Generate embeddings for each job (handles long text via chunking)
         processed = 0
-        for job, embedding in zip(jobs, embeddings):
+        chunked_jobs = 0
+        
+        for job in jobs:
+            text = build_embedding_text(job)
+            
+            # Use long text embedding (handles chunking + mean pooling automatically)
+            embedding = get_long_text_embedding(text)
+            
             if embedding:
                 job.embedding = embedding
                 processed += 1
+                
+                # Track how many needed chunking
+                if len(text) > CHUNK_SIZE:
+                    chunked_jobs += 1
         
         await db.commit()
         
         # Count remaining
         from sqlalchemy import func
-        remaining_result = await db.execute(
+        remaining_query = (
             select(func.count(Job.id))
             .where(Job.embedding.is_(None))
             .where(Job.is_active == True)
         )
+        if require_description:
+            remaining_query = remaining_query.where(Job.description.isnot(None))
+            remaining_query = remaining_query.where(Job.description != "")
+        
+        remaining_result = await db.execute(remaining_query)
         remaining = remaining_result.scalar() or 0
         
         logger.info(
-            "Embeddings generated via Gemini",
+            "Embeddings generated via Gemini (full descriptions)",
             processed=processed,
+            chunked=chunked_jobs,
             remaining=remaining,
+            with_descriptions=require_description,
         )
         
-        return {"processed": processed, "remaining": remaining}
+        return {"processed": processed, "chunked": chunked_jobs, "remaining": remaining}

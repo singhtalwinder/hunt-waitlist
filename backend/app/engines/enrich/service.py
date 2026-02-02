@@ -118,7 +118,7 @@ class JobEnrichmentService:
                 # Strip HTML tags for plain text
                 plain_text = re.sub(r'<[^>]+>', ' ', content)
                 plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                job.description = plain_text[:10000]  # Limit length
+                job.description = plain_text
             
             # Extract posted date
             updated_at = data.get("updated_at")
@@ -170,7 +170,7 @@ class JobEnrichmentService:
                 plain_text = re.sub(r'<[^>]+>', ' ', content)
                 plain_text = re.sub(r'\s+', ' ', plain_text).strip()
                 if len(plain_text) > 50:
-                    job.description = plain_text[:10000]
+                    job.description = plain_text
             
             # Fallback: try old posting-description class
             if not job.description:
@@ -183,7 +183,7 @@ class JobEnrichmentService:
                     plain_text = re.sub(r'<[^>]+>', ' ', content)
                     plain_text = re.sub(r'\s+', ' ', plain_text).strip()
                     if len(plain_text) > 50:
-                        job.description = plain_text[:10000]
+                        job.description = plain_text
             
             # Look for posted date in meta tags or structured data
             date_match = re.search(r'"datePosted"\s*:\s*"([^"]+)"', html)
@@ -233,7 +233,7 @@ class JobEnrichmentService:
                 if desc:
                     plain_text = re.sub(r'<[^>]+>', ' ', desc)
                     plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                    job.description = plain_text[:10000]
+                    job.description = plain_text
                 
                 posted = jd.get("publishedAt") or jd.get("createdAt")
                 if posted:
@@ -280,7 +280,7 @@ class JobEnrichmentService:
                     if desc:
                         plain_text = re.sub(r'<[^>]+>', ' ', desc)
                         plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                        job.description = plain_text[:10000]
+                        job.description = plain_text
                     
                     posted = jd.get("publishedAt") or jd.get("createdAt")
                     if posted:
@@ -351,7 +351,7 @@ class JobEnrichmentService:
             if desc:
                 plain_text = re.sub(r'<[^>]+>', ' ', desc)
                 plain_text = re.sub(r'\s+', ' ', plain_text).strip()
-                job.description = plain_text[:10000]
+                job.description = plain_text
             
             # Extract posted date
             published = data.get("published")
@@ -402,7 +402,7 @@ class JobEnrichmentService:
                 plain_text = re.sub(r'<[^>]+>', ' ', content)
                 plain_text = re.sub(r'\s+', ' ', plain_text).strip()
                 if len(plain_text) > 100:
-                    job.description = plain_text[:10000]
+                    job.description = plain_text
             
             # Fallback: Try HTML element patterns
             if not job.description:
@@ -422,7 +422,7 @@ class JobEnrichmentService:
                         plain_text = re.sub(r'<[^>]+>', ' ', content)
                         plain_text = re.sub(r'\s+', ' ', plain_text).strip()
                         if len(plain_text) > 100:
-                            job.description = plain_text[:10000]
+                            job.description = plain_text
                             break
             
             # Try to find posted date
