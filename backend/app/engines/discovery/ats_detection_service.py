@@ -23,7 +23,6 @@ from app.engines.discovery.ats_detector import (
     detect_ats_from_html,
     detect_ats_from_url,
     extract_identifier_from_html,
-    extract_job_links_from_html,
     get_careers_url,
 )
 from app.config import get_settings
