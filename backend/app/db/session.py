@@ -14,12 +14,12 @@ def get_pooler_url(database_url: str) -> str:
     """
     Convert a direct Supabase database URL to use the connection pooler (Supavisor).
     
-    Supabase pooler uses port 6543 instead of 5432 and requires pgbouncer=true.
+    Supabase pooler uses port 6543 instead of 5432.
     This dramatically increases connection capacity (from ~20 to thousands).
     
     Example:
         Input:  postgresql+asyncpg://user:pass@db.xxx.supabase.co:5432/postgres
-        Output: postgresql+asyncpg://user:pass@db.xxx.supabase.co:6543/postgres?pgbouncer=true
+        Output: postgresql+asyncpg://user:pass@db.xxx.supabase.co:6543/postgres
     """
     parsed = urlparse(database_url)
     
@@ -28,17 +28,12 @@ def get_pooler_url(database_url: str) -> str:
         # Replace port 5432 with 6543 (pooler port)
         new_netloc = parsed.netloc.replace(':5432', ':6543')
         
-        # Add pgbouncer=true to query params
-        new_query = 'pgbouncer=true'
-        if parsed.query:
-            new_query = f"{parsed.query}&pgbouncer=true"
-        
         pooler_url = urlunparse((
             parsed.scheme,
             new_netloc,
             parsed.path,
             parsed.params,
-            new_query,
+            parsed.query,
             parsed.fragment
         ))
         return pooler_url
@@ -60,6 +55,8 @@ engine = create_async_engine(
     max_overflow=5,    # Reduced from 15 - max 8 local connections
     pool_timeout=60,   # Wait up to 60s for a connection before failing
     pool_recycle=300,  # Recycle connections every 5 min (pooler may close idle ones)
+    # Required for pgbouncer/Supavisor transaction mode - disable prepared statements
+    connect_args={"prepared_statement_cache_size": 0},
 )
 
 # Session factory
