@@ -911,17 +911,27 @@ async def _detect_ats_browser_based(
     - Tries additional career page paths
     - Tries subdomains (careers.domain.com, jobs.domain.com)
     
+    Note: If Playwright browsers aren't installed, this will gracefully skip.
+    
     Returns:
         Tuple of (ats_type, ats_identifier, discovered_careers_url)
     """
-    from app.engines.render.browser import get_browser_pool
+    try:
+        from app.engines.render.browser import get_browser_pool
+    except ImportError as e:
+        logger.warning("Playwright not available, skipping browser detection", error=str(e))
+        return None, None, None
     
     logger.info("Starting browser-based ATS detection", domain=domain, company=company_name)
     
     try:
         browser_pool = await get_browser_pool()
     except Exception as e:
-        logger.warning("Failed to get browser pool", error=str(e))
+        # Playwright browsers not installed or other startup error
+        if "Executable doesn't exist" in str(e) or "playwright install" in str(e).lower():
+            logger.warning("Playwright browsers not installed, skipping browser detection")
+        else:
+            logger.warning("Failed to get browser pool", error=str(e))
         return None, None, None
     
     discovered_careers_url = None
@@ -947,7 +957,11 @@ async def _detect_ats_browser_based(
             urls_to_try.append(f"https://{subdomain}.{base_domain}")
     
     # Try each URL with browser rendering
+    playwright_unavailable = False
     for url in urls_to_try:
+        if playwright_unavailable:
+            break
+            
         try:
             result = await browser_pool.render(
                 url,
@@ -955,6 +969,11 @@ async def _detect_ats_browser_based(
             )
             
             if not result.success or not result.html:
+                # Check if Playwright itself failed (browsers not installed)
+                if result.error and ("Executable doesn't exist" in result.error or "playwright install" in result.error.lower()):
+                    logger.warning("Playwright browsers not installed, aborting browser detection")
+                    playwright_unavailable = True
+                    break
                 continue
             
             html_content = result.html
@@ -1182,6 +1201,9 @@ async def detect_ats_tiered(
         Tuple of (ats_type, ats_identifier, parent_domain, strategy_used)
         - strategy_used is one of: "http", "browser", "search"
     """
+    # TODO: Set to True once Playwright browsers are installed in Docker image
+    BROWSER_DETECTION_ENABLED = False
+    
     # Attempt 1 (current_attempts == 0): HTTP-based detection
     if current_attempts == 0:
         ats_type, ats_identifier, parent_domain = await _detect_ats_for_company(
@@ -1191,15 +1213,23 @@ async def detect_ats_tiered(
             return ats_type, ats_identifier, parent_domain, "http"
         return None, None, parent_domain, "http"
     
-    # Attempt 2 (current_attempts == 1): Browser-based detection
+    # Attempt 2 (current_attempts == 1): Browser-based detection (if enabled)
     elif current_attempts == 1:
-        ats_type, ats_identifier, discovered_url = await _detect_ats_browser_based(
-            domain, careers_url, website_url, company_name
-        )
-        if ats_type:
-            return ats_type, ats_identifier, None, "browser"
-        # If browser found a careers URL but no ATS, we could update careers_url
-        return None, None, None, "browser"
+        if BROWSER_DETECTION_ENABLED:
+            ats_type, ats_identifier, discovered_url = await _detect_ats_browser_based(
+                domain, careers_url, website_url, company_name
+            )
+            if ats_type:
+                return ats_type, ats_identifier, None, "browser"
+            return None, None, None, "browser"
+        else:
+            # Browser not available - use search instead
+            ats_type, ats_identifier, discovered_url = await _detect_ats_search_based(
+                domain, company_name, website_url
+            )
+            if ats_type:
+                return ats_type, ats_identifier, None, "search"
+            return None, None, None, "search"
     
     # Attempt 3 (current_attempts == 2): Search-based detection
     elif current_attempts == 2:
