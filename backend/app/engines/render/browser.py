@@ -56,8 +56,7 @@ class BrowserPool:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
-                    "--single-process",
-                    # Memory-saving options
+                    # Note: removed --single-process which causes crashes
                     "--disable-extensions",
                     "--disable-background-networking",
                     "--disable-sync",
@@ -65,7 +64,7 @@ class BrowserPool:
                     "--mute-audio",
                     "--no-first-run",
                     "--disable-features=TranslateUI",
-                    "--js-flags=--max-old-space-size=256",
+                    "--js-flags=--max-old-space-size=512",  # Increased with 2GB RAM
                 ],
             )
             self._started = True
