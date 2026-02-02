@@ -339,7 +339,7 @@ async def detect_ats_for_companies(
     db: AsyncSession,
     batch_size: int = 50,
     include_retries: bool = False,
-    max_attempts: int = 3,
+    max_attempts: int = 2,
     run_id: Optional[UUID] = None,
     continuous: bool = True,
 ) -> dict:
@@ -1191,8 +1191,12 @@ async def detect_ats_tiered(
     
     Strategy:
     - Attempt 1: Fast HTTP-based detection (httpx)
-    - Attempt 2: Browser-based detection (Playwright) - for JS-heavy pages
-    - Attempt 3+: Mark as custom
+    - Attempt 2+: Mark as custom (browser-based detection disabled - use custom crawler instead)
+    
+    Note: Browser-based detection was causing DB connection pool exhaustion because
+    the detection loop holds connections while waiting for Playwright renders.
+    Companies that fail HTTP detection are marked as "custom" and the existing
+    custom crawler (which properly manages connections) handles them.
     
     Args:
         http_client: httpx client for HTTP-based detection
@@ -1204,7 +1208,7 @@ async def detect_ats_tiered(
     
     Returns:
         Tuple of (ats_type, ats_identifier, parent_domain, strategy_used)
-        - strategy_used is one of: "http", "browser"
+        - strategy_used is one of: "http", "exhausted"
     """
     # Attempt 1 (current_attempts == 0): HTTP-based detection
     if current_attempts == 0:
@@ -1215,16 +1219,8 @@ async def detect_ats_tiered(
             return ats_type, ats_identifier, parent_domain, "http"
         return None, None, parent_domain, "http"
     
-    # Attempt 2 (current_attempts == 1): Browser-based detection (Playwright)
-    elif current_attempts == 1:
-        ats_type, ats_identifier, discovered_url = await _detect_ats_browser_based(
-            domain, careers_url, website_url, company_name
-        )
-        if ats_type:
-            return ats_type, ats_identifier, None, "browser"
-        return None, None, None, "browser"
-    
-    # Attempt 3+: Already exhausted, return None (will be marked as custom)
+    # Attempt 2+: Skip to exhausted - let custom crawler handle these
+    # Browser-based detection disabled to prevent connection pool exhaustion
     else:
         return None, None, None, "exhausted"
 
@@ -1234,8 +1230,8 @@ async def get_ats_detection_stats(db: AsyncSession) -> dict:
     result = await db.execute(text('''
         SELECT 
             COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND (ats_detection_attempts IS NULL OR ats_detection_attempts = 0)) as never_tried,
-            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 3) as tried_pending,
-            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts >= 3) as exhausted,
+            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 2) as tried_pending,
+            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts >= 2) as exhausted,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NOT NULL) as detected,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type = 'custom') as custom,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type = 'uses_parent_ats') as uses_parent
@@ -1324,7 +1320,7 @@ async def move_companies_to_dormant(
             WHERE is_active = true
             AND careers_url IS NULL
             AND ats_type IS NULL
-            AND ats_detection_attempts >= 3
+            AND ats_detection_attempts >= 2
             LIMIT :limit
         ''')
     
