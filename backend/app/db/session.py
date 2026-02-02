@@ -51,9 +51,9 @@ engine = create_async_engine(
     database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    pool_size=3,       # Reduced from 10 - pooler handles multiplexing
-    max_overflow=5,    # Reduced from 15 - max 8 local connections
-    pool_timeout=60,   # Wait up to 60s for a connection before failing
+    pool_size=10,      # Increased for browser-based detection which holds connections
+    max_overflow=10,   # Allow up to 20 connections total
+    pool_timeout=30,   # Shorter timeout - fail fast
     pool_recycle=300,  # Recycle connections every 5 min (pooler may close idle ones)
     # Required for pgbouncer/Supavisor transaction mode - disable prepared statements
     connect_args={"statement_cache_size": 0},

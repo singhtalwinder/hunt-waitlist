@@ -30,8 +30,8 @@ class BrowserPool:
 
     def __init__(
         self,
-        max_contexts: int = 1,  # Reduced to 1 to minimize memory usage
-        timeout_ms: int = 30000,
+        max_contexts: int = 2,  # Allow 2 concurrent renders with 2GB RAM
+        timeout_ms: int = 15000,  # 15s timeout per page - fail fast
     ):
         self.max_contexts = max_contexts
         self.timeout_ms = timeout_ms
