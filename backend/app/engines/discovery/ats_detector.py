@@ -285,11 +285,20 @@ HTML_PATTERNS = {
 
 def detect_ats_from_url(url: str) -> Tuple[Optional[str], Optional[str]]:
     """Detect ATS type and identifier from URL pattern."""
+    # Invalid identifiers that should be treated as "no identifier found"
+    INVALID_IDENTIFIERS = {
+        'embed', 'job_board', 'js', 'css', 'api', 'jobs', 'undefined',
+        '${boardtoken}', '${ghslug}', '${board_token}',
+    }
+    
     for ats_type, patterns in ATS_PATTERNS.items():
         for pattern in patterns:
             match = re.search(pattern, url, re.IGNORECASE)
             if match:
                 identifier = match.group(1) if match.groups() else None
+                # Skip invalid identifiers - return ats_type but no identifier
+                if identifier and identifier.lower() in INVALID_IDENTIFIERS:
+                    identifier = None
                 return ats_type, identifier
 
     return None, None
@@ -351,27 +360,56 @@ def extract_identifier_from_html(html: str, ats_type: str) -> Optional[str]:
     - Inline JavaScript config
     - Direct URLs in the page
     """
+    # Invalid greenhouse identifiers that should be skipped
+    INVALID_GH_SLUGS = {'embed', 'job_board', 'js', 'css', 'api', 'jobs', 
+                        '${boardToken}', '${ghSlug}', '${board_token}', 'undefined'}
+    
     if ats_type == "greenhouse":
         # Look for greenhouse board token in various locations
+        # Pattern 1: data-board-token attribute (most reliable)
         match = re.search(r'data-board-token="([^"]+)"', html)
-        if match:
+        if match and match.group(1) not in INVALID_GH_SLUGS:
             return match.group(1)
-        # From Greenhouse script settings
+        
+        # Pattern 2: Greenhouse script settings
         match = re.search(r"Grnhse\.Settings\.boardToken\s*=\s*['\"]([^'\"]+)['\"]", html)
-        if match:
+        if match and match.group(1) not in INVALID_GH_SLUGS:
             return match.group(1)
-        # From embed script URL with for= parameter
-        match = re.search(r'boards\.greenhouse\.io/embed/job_board[^"\']*for=([^&"\']+)', html)
-        if match:
+        
+        # Pattern 3: for= parameter in embed URL (common)
+        match = re.search(r'boards\.greenhouse\.io/embed/job_board[^"\']*[?&]for=([^&"\'#\s]+)', html)
+        if match and match.group(1) not in INVALID_GH_SLUGS:
             return match.group(1)
-        # From embedded URL
-        match = re.search(r'boards\.greenhouse\.io/([^/"\']+)', html)
-        if match:
+        
+        # Pattern 4: boardToken in JavaScript (various formats)
+        for pattern in [
+            r'boardToken["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+            r'"board_token"\s*:\s*"([^"]+)"',
+            r"'board_token'\s*:\s*'([^']+)'",
+            r'board:\s*["\']([^"\']+)["\']',
+        ]:
+            match = re.search(pattern, html)
+            if match and match.group(1) not in INVALID_GH_SLUGS:
+                return match.group(1)
+        
+        # Pattern 5: From API URL (reliable - has actual board slug)
+        match = re.search(r'boards-api\.greenhouse\.io/v1/boards/([^/"\'?#\s]+)', html)
+        if match and match.group(1) not in INVALID_GH_SLUGS:
             return match.group(1)
-        # From API URL
-        match = re.search(r'boards-api\.greenhouse\.io/v1/boards/([^/"\']+)', html)
-        if match:
+        
+        # Pattern 6: Direct board URL (NOT embed URLs) - e.g., boards.greenhouse.io/companyname
+        for m in re.finditer(r'boards\.greenhouse\.io/([a-zA-Z0-9_-]+)', html):
+            slug = m.group(1).lower()
+            if slug not in INVALID_GH_SLUGS and len(slug) > 2:
+                return m.group(1)
+        
+        # Pattern 7: iframe src with greenhouse URL
+        match = re.search(r'<iframe[^>]+src="[^"]*boards\.greenhouse\.io/([a-zA-Z0-9_-]+)', html)
+        if match and match.group(1).lower() not in INVALID_GH_SLUGS:
             return match.group(1)
+        
+        # Return None if only "embed" pattern found - don't use it
+        return None
 
     elif ats_type == "lever":
         # Look for lever site ID

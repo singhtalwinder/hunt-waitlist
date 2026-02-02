@@ -1,5 +1,13 @@
-"""Service for detecting ATS type for companies missing ATS information."""
+"""Service for detecting ATS type for companies missing ATS information.
 
+Implements a tiered retry strategy:
+- Attempt 1: Fast HTTP-based detection (httpx, no JS)
+- Attempt 2: Browser-based detection (Playwright, full JS rendering)
+- Attempt 3: Discovery-based detection (Google Search API)
+- Attempt 4+: Mark as "custom" (needs manual Playwright crawl)
+"""
+
+import asyncio
 import re
 from datetime import datetime, timezone
 from typing import Optional, Tuple
@@ -15,10 +23,29 @@ from app.engines.discovery.ats_detector import (
     detect_ats_from_html,
     detect_ats_from_url,
     extract_identifier_from_html,
+    extract_job_links_from_html,
     get_careers_url,
 )
+from app.config import get_settings
 
+settings = get_settings()
 logger = structlog.get_logger()
+
+
+# ============================================================================
+# TIERED DETECTION STRATEGY
+# ============================================================================
+#
+# The detection strategy is selected based on the current attempt number:
+#
+# | Attempt | Strategy           | What it does                              |
+# |---------|--------------------|--------------------------------------------|
+# | 1       | HTTP (httpx)       | Fast URL/HTML pattern matching             |
+# | 2       | Browser (Playwright)| Renders JS, checks iframes, more paths    |
+# | 3       | Search (Google)    | Finds careers page via search              |
+# | 4+      | Mark as "custom"   | Needs manual Playwright crawl              |
+#
+# ============================================================================
 
 
 # Patterns that indicate a URL is NOT a careers page
@@ -313,12 +340,18 @@ async def detect_ats_for_companies(
     db: AsyncSession,
     batch_size: int = 50,
     include_retries: bool = False,
-    max_attempts: int = 3,
+    max_attempts: int = 4,
     run_id: Optional[UUID] = None,
     continuous: bool = True,
 ) -> dict:
     """
     Detect ATS type for companies that are missing it.
+    
+    Uses a tiered detection strategy:
+    - Attempt 1: Fast HTTP-based detection (httpx)
+    - Attempt 2: Browser-based detection (Playwright)
+    - Attempt 3: Search-based detection (Google API)
+    - Attempt 4: Mark as "custom"
     
     Runs continuously in batches until no more companies are found.
     
@@ -326,7 +359,7 @@ async def detect_ats_for_companies(
         db: Database session
         batch_size: Number of companies to process per batch (default 50, smaller = more reliable)
         include_retries: If True, also retry companies that failed before (up to max_attempts)
-        max_attempts: Maximum number of detection attempts per company
+        max_attempts: Maximum number of detection attempts per company (default 4 for tiered strategy)
         run_id: Optional pipeline run ID for logging
         continuous: If True, keep running batches until no more companies found
     
@@ -459,10 +492,12 @@ async def detect_ats_for_companies(
                 domain = company.domain
                 careers_url = company.careers_url
                 website_url = company.website_url
+                current_attempts = company.ats_detection_attempts or 0
                 
                 try:
-                    ats_type, ats_identifier, parent_domain = await _detect_ats_for_company(
-                        client, domain, careers_url, website_url
+                    # Use tiered detection strategy based on attempt count
+                    ats_type, ats_identifier, parent_domain, strategy_used = await detect_ats_tiered(
+                        client, domain, careers_url, website_url, name, current_attempts
                     )
                     
                     # Update the company - commit immediately to prevent timeout
@@ -489,14 +524,22 @@ async def detect_ats_for_companies(
                         )
                         await db.commit()  # Commit immediately after each update
                         batch_detected += 1
-                        logger.info("ATS detected", company=name, ats_type=ats_type, identifier=ats_identifier)
+                        logger.info(
+                            "ATS detected", 
+                            company=name, 
+                            ats_type=ats_type, 
+                            identifier=ats_identifier,
+                            strategy=strategy_used,
+                            attempt=current_attempts + 1,
+                        )
                         
-                        # Log successful detection
+                        # Log successful detection with strategy info
                         if run_id:
+                            strategy_emoji = {"http": "⚡", "browser": "🌐", "search": "🔍"}.get(strategy_used, "✓")
                             await _log_to_run(
                                 db, run_id, "info", 
-                                f"✓ Detected: {name} - {ats_type}" + (f" ({ats_identifier})" if ats_identifier else ""),
-                                data={"company": name, "domain": domain, "ats_type": ats_type, "ats_identifier": ats_identifier},
+                                f"{strategy_emoji} Detected: {name} - {ats_type}" + (f" ({ats_identifier})" if ats_identifier else "") + f" [via {strategy_used}]",
+                                data={"company": name, "domain": domain, "ats_type": ats_type, "ats_identifier": ats_identifier, "strategy": strategy_used},
                                 current_step=f"Batch {batch_number}: {batch_processed}/{batch_count}",
                                 progress_count=total_detected + batch_detected,
                             )
@@ -540,12 +583,11 @@ async def detect_ats_for_companies(
                                 progress_count=total_detected + batch_detected,
                             )
                     else:
-                        # Get current attempt count to check if we're exhausting retries
-                        current_attempts = company.ats_detection_attempts or 0
+                        # No ATS detected, increment attempt count
                         new_attempts = current_attempts + 1
                         
                         if new_attempts >= max_attempts:
-                            # Mark as custom - we've exhausted retries
+                            # Mark as custom - we've exhausted all tiered strategies
                             await db.execute(
                                 text('''
                                     UPDATE companies
@@ -558,13 +600,18 @@ async def detect_ats_for_companies(
                             )
                             await db.commit()
                             batch_detected += 1  # Count as "resolved"
-                            logger.info("Marked as custom (exhausted retries)", company=name, attempts=new_attempts)
+                            logger.info(
+                                "Marked as custom (exhausted all strategies)", 
+                                company=name, 
+                                attempts=new_attempts,
+                                final_strategy=strategy_used,
+                            )
                             
                             if run_id:
                                 await _log_to_run(
                                     db, run_id, "info", 
-                                    f"⚙ Custom: {name} (after {new_attempts} attempts)",
-                                    data={"company": name, "domain": domain, "attempts": new_attempts},
+                                    f"⚙ Custom: {name} (after {new_attempts} attempts - tried HTTP/Browser/Search)",
+                                    data={"company": name, "domain": domain, "attempts": new_attempts, "strategy": strategy_used},
                                     current_step=f"Batch {batch_number}: {batch_processed}/{batch_count}",
                                     progress_count=total_detected + batch_detected,
                                 )
@@ -580,7 +627,16 @@ async def detect_ats_for_companies(
                             )
                             await db.commit()
                             batch_not_detected += 1
-                            logger.debug("No ATS detected", company=name, attempts=new_attempts)
+                            
+                            # Map attempt to next strategy for logging
+                            next_strategy = {1: "browser", 2: "search", 3: "custom"}.get(new_attempts, "custom")
+                            logger.debug(
+                                "No ATS detected, will retry with different strategy",
+                                company=name, 
+                                attempt=new_attempts,
+                                strategy_used=strategy_used,
+                                next_strategy=next_strategy,
+                            )
                         
                 except Exception as e:
                     batch_errors += 1
@@ -820,13 +876,353 @@ async def _detect_ats_for_company(
     return None, None, parent_domain
 
 
+# ============================================================================
+# ATTEMPT 2: Browser-based Detection (Playwright)
+# ============================================================================
+
+# Additional paths to check that Attempt 1 doesn't try
+ADDITIONAL_CAREER_PATHS = [
+    "/join",
+    "/join-us", 
+    "/about/careers",
+    "/work-with-us",
+    "/openings",
+    "/team/jobs",
+    "/company/careers",
+    "/about/jobs",
+    "/hiring",
+]
+
+# Subdomains to try
+CAREER_SUBDOMAINS = ["careers", "jobs", "hire", "work"]
+
+
+async def _detect_ats_browser_based(
+    domain: Optional[str],
+    careers_url: Optional[str],
+    website_url: Optional[str],
+    company_name: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Attempt 2: Browser-based ATS detection using Playwright.
+    
+    This is more thorough than HTTP-based detection:
+    - Renders JavaScript (catches React/Vue career pages)
+    - Checks iframes for embedded ATS widgets
+    - Tries additional career page paths
+    - Tries subdomains (careers.domain.com, jobs.domain.com)
+    
+    Returns:
+        Tuple of (ats_type, ats_identifier, discovered_careers_url)
+    """
+    from app.engines.render.browser import get_browser_pool
+    
+    logger.info("Starting browser-based ATS detection", domain=domain, company=company_name)
+    
+    try:
+        browser_pool = await get_browser_pool()
+    except Exception as e:
+        logger.warning("Failed to get browser pool", error=str(e))
+        return None, None, None
+    
+    discovered_careers_url = None
+    
+    # URLs to try, in priority order
+    urls_to_try = []
+    
+    # 1. Start with known careers_url if available
+    if careers_url and is_valid_careers_url(careers_url):
+        urls_to_try.append(careers_url)
+    
+    # 2. Try website_url + additional paths
+    base_url = website_url or (f"https://{domain}" if domain else None)
+    if base_url:
+        for path in ADDITIONAL_CAREER_PATHS:
+            urls_to_try.append(base_url.rstrip("/") + path)
+    
+    # 3. Try subdomains
+    if domain:
+        # Extract base domain (remove www if present)
+        base_domain = domain.replace("www.", "")
+        for subdomain in CAREER_SUBDOMAINS:
+            urls_to_try.append(f"https://{subdomain}.{base_domain}")
+    
+    # Try each URL with browser rendering
+    for url in urls_to_try:
+        try:
+            result = await browser_pool.render(
+                url,
+                wait_for_network_idle=True,
+            )
+            
+            if not result.success or not result.html:
+                continue
+            
+            html_content = result.html
+            
+            # Check for ATS patterns in rendered HTML
+            ats_type = detect_ats_from_html(html_content)
+            if ats_type:
+                ats_identifier = extract_identifier_from_html(html_content, ats_type)
+                logger.info(
+                    "Browser detection: ATS found in HTML",
+                    url=url, ats_type=ats_type, identifier=ats_identifier
+                )
+                return ats_type, ats_identifier, url
+            
+            # Check for ATS in iframes
+            iframe_ats = _extract_ats_from_iframes(html_content)
+            if iframe_ats:
+                ats_type, ats_identifier = iframe_ats
+                logger.info(
+                    "Browser detection: ATS found in iframe",
+                    url=url, ats_type=ats_type, identifier=ats_identifier
+                )
+                return ats_type, ats_identifier, url
+            
+            # If we found a careers page but no ATS, save the URL
+            if _looks_like_careers_page(html_content) and not discovered_careers_url:
+                discovered_careers_url = url
+            
+            # Extract and check job links from rendered page
+            job_links = extract_job_links_from_html(html_content, url)
+            for job_link in job_links[:3]:  # Check up to 3 job links
+                try:
+                    job_result = await browser_pool.render(job_link, wait_for_network_idle=True)
+                    if job_result.success and job_result.html:
+                        # Check final URL after redirect
+                        ats_type, ats_identifier = detect_ats_from_url(job_link)
+                        if ats_type:
+                            logger.info(
+                                "Browser detection: ATS found from job link",
+                                job_link=job_link, ats_type=ats_type
+                            )
+                            return ats_type, ats_identifier, url
+                        
+                        # Check job page HTML
+                        ats_type = detect_ats_from_html(job_result.html)
+                        if ats_type:
+                            ats_identifier = extract_identifier_from_html(job_result.html, ats_type)
+                            return ats_type, ats_identifier, url
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            logger.debug("Browser detection: URL failed", url=url, error=str(e))
+            continue
+    
+    logger.info("Browser-based detection: No ATS found", domain=domain)
+    return None, None, discovered_careers_url
+
+
+def _extract_ats_from_iframes(html_content: str) -> Optional[Tuple[str, Optional[str]]]:
+    """Extract ATS type from iframe src attributes in HTML."""
+    import re
+    
+    # Find all iframe src attributes
+    iframe_pattern = r'<iframe[^>]+src=["\']([^"\']+)["\']'
+    matches = re.findall(iframe_pattern, html_content, re.IGNORECASE)
+    
+    for src in matches:
+        ats_type, ats_identifier = detect_ats_from_url(src)
+        if ats_type:
+            return ats_type, ats_identifier
+    
+    return None
+
+
+def _looks_like_careers_page(html_content: str) -> bool:
+    """Check if HTML looks like a careers/jobs page (even without recognized ATS)."""
+    html_lower = html_content.lower()
+    
+    career_indicators = [
+        "job opening",
+        "open position",
+        "career opportunities",
+        "we're hiring",
+        "we are hiring",
+        "join our team",
+        "current openings",
+        "apply now",
+        "view all jobs",
+        "browse jobs",
+    ]
+    
+    return any(indicator in html_lower for indicator in career_indicators)
+
+
+# ============================================================================
+# ATTEMPT 3: Search-based Detection (Google API)
+# ============================================================================
+
+# Known ATS board domains for search
+ATS_SEARCH_DOMAINS = {
+    "greenhouse": "boards.greenhouse.io",
+    "lever": "jobs.lever.co",
+    "ashby": "jobs.ashbyhq.com",
+    "workable": "apply.workable.com",
+    "smartrecruiters": "jobs.smartrecruiters.com",
+    "recruitee": "recruitee.com",
+    "bamboohr": "bamboohr.com/careers",
+    "icims": "icims.com",
+    "jobvite": "jobvite.com",
+}
+
+
+async def _detect_ats_search_based(
+    domain: Optional[str],
+    company_name: Optional[str],
+    website_url: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Attempt 3: Search-based ATS detection using Google Search API.
+    
+    Uses Google Custom Search to find the company's careers page or ATS board.
+    This catches cases where:
+    - Careers page is on a separate domain
+    - URL structure is unusual
+    - ATS board exists but isn't linked from main site
+    
+    Returns:
+        Tuple of (ats_type, ats_identifier, discovered_careers_url)
+    """
+    api_key = settings.google_api_key
+    cx = settings.google_cx
+    
+    if not api_key or not cx:
+        logger.debug("Google Search API not configured, skipping search-based detection")
+        return None, None, None
+    
+    logger.info("Starting search-based ATS detection", domain=domain, company=company_name)
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Search queries to try
+        queries = []
+        
+        # Query 1: Company name + careers
+        if company_name:
+            queries.append(f'"{company_name}" careers jobs')
+        
+        # Query 2: Site-specific search for careers
+        if domain:
+            queries.append(f'site:{domain} careers OR jobs OR openings')
+        
+        # Query 3: Search each ATS domain for company
+        if company_name:
+            for ats_type, ats_domain in list(ATS_SEARCH_DOMAINS.items())[:3]:  # Top 3 ATS
+                queries.append(f'site:{ats_domain} "{company_name}"')
+        
+        for query in queries:
+            try:
+                response = await client.get(
+                    "https://www.googleapis.com/customsearch/v1",
+                    params={
+                        "key": api_key,
+                        "cx": cx,
+                        "q": query,
+                        "num": 5,
+                    },
+                )
+                
+                if response.status_code == 429:
+                    logger.warning("Google Search API rate limited")
+                    await asyncio.sleep(1)
+                    continue
+                
+                if response.status_code != 200:
+                    logger.debug("Google Search API error", status=response.status_code)
+                    continue
+                
+                data = response.json()
+                items = data.get("items", [])
+                
+                for item in items:
+                    url = item.get("link", "")
+                    
+                    # Check if result URL matches a known ATS pattern
+                    ats_type, ats_identifier = detect_ats_from_url(url)
+                    if ats_type:
+                        logger.info(
+                            "Search detection: ATS found",
+                            query=query, url=url, ats_type=ats_type, identifier=ats_identifier
+                        )
+                        return ats_type, ats_identifier, url
+                
+            except Exception as e:
+                logger.debug("Search query failed", query=query, error=str(e))
+                continue
+    
+    logger.info("Search-based detection: No ATS found", domain=domain)
+    return None, None, None
+
+
+# ============================================================================
+# UNIFIED TIERED DETECTION
+# ============================================================================
+
+async def detect_ats_tiered(
+    http_client: httpx.AsyncClient,
+    domain: Optional[str],
+    careers_url: Optional[str],
+    website_url: Optional[str],
+    company_name: Optional[str],
+    current_attempts: int,
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """
+    Unified ATS detection with tiered strategy based on attempt number.
+    
+    Args:
+        http_client: httpx client for HTTP-based detection
+        domain: Company domain
+        careers_url: Known careers URL (if any)
+        website_url: Company website URL
+        company_name: Company name (for search)
+        current_attempts: Number of previous detection attempts
+    
+    Returns:
+        Tuple of (ats_type, ats_identifier, parent_domain, strategy_used)
+        - strategy_used is one of: "http", "browser", "search"
+    """
+    # Attempt 1 (current_attempts == 0): HTTP-based detection
+    if current_attempts == 0:
+        ats_type, ats_identifier, parent_domain = await _detect_ats_for_company(
+            http_client, domain, careers_url, website_url
+        )
+        if ats_type:
+            return ats_type, ats_identifier, parent_domain, "http"
+        return None, None, parent_domain, "http"
+    
+    # Attempt 2 (current_attempts == 1): Browser-based detection
+    elif current_attempts == 1:
+        ats_type, ats_identifier, discovered_url = await _detect_ats_browser_based(
+            domain, careers_url, website_url, company_name
+        )
+        if ats_type:
+            return ats_type, ats_identifier, None, "browser"
+        # If browser found a careers URL but no ATS, we could update careers_url
+        return None, None, None, "browser"
+    
+    # Attempt 3 (current_attempts == 2): Search-based detection
+    elif current_attempts == 2:
+        ats_type, ats_identifier, discovered_url = await _detect_ats_search_based(
+            domain, company_name, website_url
+        )
+        if ats_type:
+            return ats_type, ats_identifier, None, "search"
+        return None, None, None, "search"
+    
+    # Attempt 4+: Already exhausted, return None
+    else:
+        return None, None, None, "exhausted"
+
+
 async def get_ats_detection_stats(db: AsyncSession) -> dict:
     """Get statistics about ATS detection status."""
     result = await db.execute(text('''
         SELECT 
             COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND (ats_detection_attempts IS NULL OR ats_detection_attempts = 0)) as never_tried,
-            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 3) as tried_pending,
-            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts >= 3) as exhausted,
+            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts > 0 AND ats_detection_attempts < 4) as tried_pending,
+            COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NULL AND ats_detection_attempts >= 4) as exhausted,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type IS NOT NULL) as detected,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type = 'custom') as custom,
             COUNT(*) FILTER (WHERE is_active = true AND ats_type = 'uses_parent_ats') as uses_parent
@@ -915,7 +1311,7 @@ async def move_companies_to_dormant(
             WHERE is_active = true
             AND careers_url IS NULL
             AND ats_type IS NULL
-            AND ats_detection_attempts >= 3
+            AND ats_detection_attempts >= 4
             LIMIT :limit
         ''')
     

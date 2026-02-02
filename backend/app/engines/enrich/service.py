@@ -551,15 +551,28 @@ class JobEnrichmentService:
                 result = await db.execute(sql, params)
                 job_company_ids = result.fetchall()
                 
-                # Fetch full Job and Company objects
-                jobs_to_enrich = []
-                for row in job_company_ids:
-                    job_result = await db.execute(select(Job).where(Job.id == row.job_id))
-                    job = job_result.scalar_one_or_none()
-                    company_result = await db.execute(select(Company).where(Company.id == row.company_id))
-                    company = company_result.scalar_one_or_none()
-                    if job and company:
-                        jobs_to_enrich.append((job, company))
+                if not job_company_ids:
+                    jobs_to_enrich = []
+                else:
+                    # Batch fetch all Job and Company objects (avoid N+1 queries)
+                    job_ids = [row.job_id for row in job_company_ids]
+                    company_ids = list(set(row.company_id for row in job_company_ids))
+                    
+                    # Fetch all jobs in one query
+                    jobs_result = await db.execute(select(Job).where(Job.id.in_(job_ids)))
+                    jobs_by_id = {job.id: job for job in jobs_result.scalars().all()}
+                    
+                    # Fetch all companies in one query
+                    companies_result = await db.execute(select(Company).where(Company.id.in_(company_ids)))
+                    companies_by_id = {company.id: company for company in companies_result.scalars().all()}
+                    
+                    # Match jobs with companies
+                    jobs_to_enrich = []
+                    for row in job_company_ids:
+                        job = jobs_by_id.get(row.job_id)
+                        company = companies_by_id.get(row.company_id)
+                        if job and company:
+                            jobs_to_enrich.append((job, company))
             
             # No more jobs to enrich - we're done
             if not jobs_to_enrich:
@@ -594,6 +607,9 @@ class JobEnrichmentService:
             
             async def enrich_with_semaphore(job: Job, company: Company):
                 nonlocal batch_success, batch_failed, batch_processed
+                job_title = job.title[:50] if job.title else "Unknown"
+                company_name = company.name[:30] if company.name else "Unknown"
+                
                 async with semaphore:
                     # Use separate session for each job
                     async with async_session_factory() as db:
@@ -626,6 +642,20 @@ class JobEnrichmentService:
                                         pass  # Column might not exist
                                 await db.commit()
                                 batch_success += 1
+                                batch_processed += 1
+                                
+                                # Log successful enrichment
+                                if run_id:
+                                    try:
+                                        async with async_session_factory() as log_db:
+                                            await log_to_run(
+                                                log_db, run_id, "info",
+                                                f"Enriched: {job_title} @ {company_name}",
+                                                current_step=f"Batch {results['batches']}: {batch_processed}/{len(jobs_to_enrich)}",
+                                                progress_count=results["success"] + batch_success,
+                                            )
+                                    except Exception:
+                                        pass  # Don't fail on log errors
                             else:
                                 # Mark as failed so we don't retry in this run (if column exists)
                                 if has_enrich_failed_col:
@@ -638,7 +668,20 @@ class JobEnrichmentService:
                                     except Exception:
                                         pass  # Column might not exist
                                 batch_failed += 1
-                            batch_processed += 1
+                                batch_processed += 1
+                                
+                                # Log failed enrichment
+                                if run_id:
+                                    try:
+                                        async with async_session_factory() as log_db:
+                                            await log_to_run(
+                                                log_db, run_id, "warn",
+                                                f"Failed: {job_title} @ {company_name}",
+                                                current_step=f"Batch {results['batches']}: {batch_processed}/{len(jobs_to_enrich)}",
+                                                failed_count=results["failed"] + batch_failed,
+                                            )
+                                    except Exception:
+                                        pass
                         except Exception as e:
                             logger.debug(f"Enrichment error for job {job.id}: {e}")
                             # Mark as failed on exception too (if column exists)
@@ -653,6 +696,19 @@ class JobEnrichmentService:
                                     pass  # Best effort
                             batch_failed += 1
                             batch_processed += 1
+                            
+                            # Log error
+                            if run_id:
+                                try:
+                                    async with async_session_factory() as log_db:
+                                        await log_to_run(
+                                            log_db, run_id, "error",
+                                            f"Error: {job_title} @ {company_name}: {str(e)[:50]}",
+                                            current_step=f"Batch {results['batches']}: {batch_processed}/{len(jobs_to_enrich)}",
+                                            failed_count=results["failed"] + batch_failed,
+                                        )
+                                except Exception:
+                                    pass
                         finally:
                             await service.close()
             

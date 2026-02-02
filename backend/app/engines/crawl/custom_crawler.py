@@ -61,11 +61,13 @@ class CustomCrawlerService:
         # Browser pool is shared, don't close it
         pass
     
-    async def mark_exhausted_as_custom(self, max_attempts: int = 3) -> int:
+    async def mark_exhausted_as_custom(self, max_attempts: int = 4) -> int:
         """
         Mark companies with exhausted ATS detection attempts as 'custom'.
         
         This allows them to be crawled with the Playwright extractor.
+        
+        Note: Default is 4 attempts for tiered strategy (HTTP, Browser, Search, then custom).
         
         Returns:
             Number of companies marked

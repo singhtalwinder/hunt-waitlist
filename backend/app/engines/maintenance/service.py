@@ -12,6 +12,7 @@ Supports both:
 """
 
 import asyncio
+import json
 from datetime import datetime
 from typing import Optional, Set
 from uuid import UUID
@@ -53,7 +54,7 @@ async def log_to_maintenance_run(
         UPDATE maintenance_runs
         SET logs = logs || :log_entry::jsonb
         WHERE id = :run_id
-    """), {"run_id": run_id, "log_entry": f"[{str(log_entry).replace(\"'\", '\"')}]"})
+    """), {"run_id": run_id, "log_entry": json.dumps([log_entry])})
     
     if current_step:
         await db.execute(text("""
