@@ -56,7 +56,7 @@ engine = create_async_engine(
     pool_timeout=60,   # Wait up to 60s for a connection before failing
     pool_recycle=300,  # Recycle connections every 5 min (pooler may close idle ones)
     # Required for pgbouncer/Supavisor transaction mode - disable prepared statements
-    connect_args={"prepared_statement_cache_size": 0},
+    connect_args={"statement_cache_size": 0},
 )
 
 # Session factory
