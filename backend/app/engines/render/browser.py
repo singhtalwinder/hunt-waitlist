@@ -30,7 +30,7 @@ class BrowserPool:
 
     def __init__(
         self,
-        max_contexts: int = 5,
+        max_contexts: int = 1,  # Reduced to 1 to minimize memory usage
         timeout_ms: int = 30000,
     ):
         self.max_contexts = max_contexts
@@ -39,26 +39,37 @@ class BrowserPool:
         self._browser: Optional[Browser] = None
         self._semaphore = asyncio.Semaphore(max_contexts)
         self._started = False
+        self._lock = asyncio.Lock()
 
     async def start(self):
         """Start the browser pool."""
-        if self._started:
-            return
+        async with self._lock:
+            if self._started:
+                return
 
-        logger.info("Starting browser pool")
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process",
-            ],
-        )
-        self._started = True
-        logger.info("Browser pool started")
+            logger.info("Starting browser pool")
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    # Memory-saving options
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-sync",
+                    "--disable-translate",
+                    "--mute-audio",
+                    "--no-first-run",
+                    "--disable-features=TranslateUI",
+                    "--js-flags=--max-old-space-size=256",
+                ],
+            )
+            self._started = True
+            logger.info("Browser pool started")
 
     async def stop(self):
         """Stop the browser pool."""
@@ -73,6 +84,31 @@ class BrowserPool:
         self._started = False
         logger.info("Browser pool stopped")
 
+    async def _ensure_browser(self):
+        """Ensure browser is running, restart if crashed."""
+        if not self._started:
+            await self.start()
+            return
+        
+        # Check if browser is still alive
+        try:
+            if self._browser and self._browser.is_connected():
+                return
+        except Exception:
+            pass
+        
+        # Browser crashed, restart it
+        logger.warning("Browser crashed, restarting...")
+        self._started = False
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+        self._playwright = None
+        self._browser = None
+        await self.start()
+
     async def render(
         self,
         url: str,
@@ -81,8 +117,7 @@ class BrowserPool:
         take_screenshot: bool = False,
     ) -> RenderResult:
         """Render a page and return the HTML."""
-        if not self._started:
-            await self.start()
+        await self._ensure_browser()
 
         start_time = time.monotonic()
 
